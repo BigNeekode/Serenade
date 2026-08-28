@@ -29,9 +29,10 @@ function parseVersion(raw?: string): ParsedVersion | null {
 /**
  * Serenade's currently verified Hand contracts.
  *
- * 0.6 remains the production legacy adapter. 0.7 is the transition line we
- * intentionally support while moving supervision toward per-turn orient.
- * 0.8+ is read/diagnostics-only until a released 0.8 adapter is verified.
+ * 0.6 is the only released contract verified end-to-end by Serenade today.
+ * 0.7 is an intentional transition target, but remains mutation-blocked until
+ * its release is tested against Serenade. 0.8+ likewise stays
+ * read/diagnostics-only until its canonical adapter is verified.
  */
 export function classifyHandCompatibility(handVersion?: string): HandCompatibility {
   const version = parseVersion(handVersion);
@@ -55,10 +56,10 @@ export function classifyHandCompatibility(handVersion?: string): HandCompatibili
 
   if (version.major === 0 && version.minor === 7) {
     return {
-      mode: "supported",
+      mode: "warning",
       contract: "transition-0.7",
-      mutationsAllowed: true,
-      reason: "Supported transition contract; Supervisor should re-orient every reasoning turn.",
+      mutationsAllowed: false,
+      reason: "Hand 0.7 transition contract detected. Serenade will re-orient correctly, but workflow mutations stay disabled until the released 0.7 contract is verified.",
     };
   }
 
@@ -111,8 +112,8 @@ export function assertHandMutationCompatible(env: EnvironmentStatus): void {
     detail: env.handVersion ? `Detected: ${env.handVersion}` : "Hand version unavailable",
     recoverable: true,
     suggestedAction:
-      compatibility.contract === "v0.8-unadapted"
-        ? "Use read-only Serenade views for now, or switch to a verified Hand 0.6/0.7 installation until the 0.8 adapter lands."
-        : "Open Settings → Diagnostics and verify the configured Hand binary/version.",
+      compatibility.contract === "legacy-0.6"
+        ? "Open Settings → Diagnostics and verify the configured Hand installation."
+        : "Use Serenade's read-only views for now, or switch to the verified Hand 0.6 release until this contract is qualified.",
   });
 }
