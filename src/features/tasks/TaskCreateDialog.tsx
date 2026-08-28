@@ -85,7 +85,7 @@ function TaskCreateForm({
       open
       onClose={onClose}
       title="New Task"
-      description="Create scout (investigation) or ship (implementation) work for a project."
+      description="Creates the task brief and dispatches a worker immediately (hand spawn)."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -127,8 +127,8 @@ function TaskCreateForm({
         <div className="grid grid-cols-2 gap-4">
           <Field label="Type">
             <Select value={type} onChange={(e) => setType(e.target.value as TaskType)}>
-              <option value="scout">scout — investigate & report</option>
-              <option value="ship">ship — implement</option>
+              <option value="scout">scout — investigate, deliverable is a report</option>
+              <option value="ship">ship — implement, deliverable is a PR</option>
             </Select>
           </Field>
           <Field label="Execution class">

@@ -26,6 +26,7 @@ export interface SerenadeApi {
   updateConfig(input: Partial<AppConfig>): Promise<AppConfig>;
   validateEnvironment(): Promise<EnvironmentStatus>;
   getDiagnostics(): Promise<Diagnostics>;
+  initializeFleet(path: string): Promise<void>;
 
   // Reads
   listProjects(): Promise<Project[]>;

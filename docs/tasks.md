@@ -23,27 +23,36 @@ Suggested status markers:
 
 ---
 
-## Progress Summary (updated 2026-08-28)
+## Progress Summary (updated 2026-08-28, after hand 0.6.0 integration)
 
 - **Phases 1–10 complete**: bootstrapped React/TS/Vite/Tailwind app, full design
-  system, app shell, mock repository (`MockSerenadeApi`), and every MVP screen
-  (overview, projects, board, task detail, agents, worktrees, reports, routes,
-  settings, setup).
-- **Phase 13 (mutations), 15 (polling), 16 (settings), 17 (error/empty states)
-  complete** against the mock API.
-- **Phase 0 blocked**: no `hand` binary exists in this environment —
-  see `docs/hand-integration-notes.md`.
-- **Phases 11–12 blocked**: no Rust toolchain; `TauriSerenadeApi` is implemented
-  and auto-detected, but the Rust command layer is not scaffolded.
-- **Phase 19 blocked**: packaging requires the Tauri backend.
+  system, app shell, mock repository (`MockSerenadeApi`), and every MVP screen.
+- **Phase 0 complete**: hand 0.6.0 investigated from source (`github.com/atqamz/hand`);
+  findings in `docs/hand-integration-notes.md`.
+- **Phase 11 complete**: Tauri backend implemented (`src-tauri/`) — hand process
+  wrapper with HAND_HOME pinning + timeouts + error-doc parsing, serde models for
+  status/project JSON, TOON parser for `hand config`, config store, Git
+  enrichment, local tooling (editor/folder/terminal), 25 commands. Release build
+  verified (`src-tauri/target/release/app.exe`).
+- **Phase 12 complete**: real reads through the adapter (projects, tasks, agents,
+  worktrees, reports, routes, events, logs).
+- **Phase 13 complete**: mutations mapped (create=brief+spawn, send, reopen=retry,
+  teardown=stop, promote). Live spawn requires hand's runtime (treehouse/herdr via
+  `bootstrap.ps1`) — errors surface typed through the GUI.
+- **Phase 15 complete** (polling), **Phase 16 complete** (settings; route editor
+  intentionally read-only), **Phase 17 complete** (error/empty states).
+- **Phase 18 partial**: unit tests for TOON parser (Rust) + UI/mock tests (Vitest).
+  Parser fixtures for real hand JSON pending; fake hand executable pending; E2E pending.
+- **Phase 19 partial**: debug/release builds work; installer bundling untested.
 
 ---
 
 # Phase 0 — Investigate `hand`
 
-> **Status: BLOCKED** — `hand` is not installed in this environment.
-> Findings, assumptions, and the conservative capability matrix are documented in
-> `docs/hand-integration-notes.md`. Re-run this phase once `hand` is available.
+> **Status: DONE** — hand 0.6.0 cataloged from the published CLI and its Go
+> source (`github.com/atqamz/hand`). See `docs/hand-integration-notes.md` for
+> the full contract: JSON shapes, TOON formats, error documents, exit codes,
+> fleet-home layout, capability matrix, and status-derivation rules.
 
 ## HAND-001 — Inspect repository structure
 - [!] Identify packages/modules.
@@ -585,101 +594,102 @@ Display:
 
 # Phase 11 — Tauri Backend
 
-> **Status: BLOCKED** — no Rust toolchain in this environment.
-> The frontend side is done: `TauriSerenadeApi` (`src/lib/api/tauri.ts`) maps to
-> the command names from architecture.md §7 and auto-activates under Tauri.
+> **Status: DONE** — `src-tauri/` implements the full command layer.
+> Layout: `error.rs`, `config.rs`, `domain.rs`, `hand/{process,model,toon}.rs`,
+> `adapter.rs`, `fleet_files.rs`, `git.rs`, `local.rs`, `lib.rs` (commands).
 
 ## BACKEND-001 — Error model
-- [~] Implement typed error codes. *(Typed `SerenadeErrorCode` + serialized
-  `AppError` exist in `src/types/domain.ts`; Rust enum pending.)*
+- [x] Implement typed error codes. *(Rust `Code` enum → serialized `AppError`;
+  hand stderr error-docs parsed and mapped with exit-kind semantics.)*
 
 ---
 
 ## BACKEND-002 — Config store
-- [!] GUI config path
-- [!] load
-- [!] save
-- [!] defaults
-- [!] validation
+- [x] GUI config path *(app-data `serenade-config.json`)*
+- [x] load
+- [x] save
+- [x] defaults
+- [x] validation *(presence-based partial merge)*
 
 ---
 
 ## BACKEND-003 — Detect hand
-- [!] PATH search
-- [!] configured path
-- [!] version
-- [!] validation
+- [x] PATH search *(configured path or `hand` on PATH)*
+- [x] configured path
+- [x] version *(`hand --version` probe)*
+- [x] validation *(environment_validate + first-run gate)*
 
 ---
 
 ## BACKEND-004 — Fleet validation
 Validate:
-- [!] path exists
-- [!] expected hand fleet structure
-- [!] access permissions
+- [x] path exists
+- [x] expected hand fleet structure *(state/hand.db or legacy markers)*
+- [x] access permissions *(typed errors on failure)*
 
 ---
 
 ## BACKEND-005 — Hand process wrapper
-- [!] fixed executable
-- [!] fixed argument construction
-- [!] stdout
-- [!] stderr
-- [!] timeout
-- [!] exit code
-- [!] safe error mapping
+- [x] fixed executable
+- [x] fixed argument construction *(never a shell string)*
+- [x] stdout
+- [x] stderr
+- [x] timeout *(per-command: 10–180s; kill on expiry)*
+- [x] exit code
+- [x] safe error mapping *(error-doc parser → typed AppError)*
 
 ---
 
 # Phase 12 — Real Data Reads
 
-> **Status: BLOCKED** — requires Phase 0 investigation + Phase 11 backend.
+> **Status: DONE** — reads go through `hand status --json`, `hand project list
+> --json`, fleet files (`state/`, `data/`), and TOON parsing of `hand config`.
 
 ## DATA-001 — Projects
-Replace mock projects with real adapter.
+- [x] `hand project list --json` → Project (clone path under `<home>/projects/`).
 
 ## DATA-002 — Tasks
-Replace mock tasks.
+- [x] `hand status --json` → Task, with UI status derived from lifecycle
+  vocabulary (see hand-integration-notes.md §10) and titles read from briefs.
 
 ## DATA-003 — Agents
-Replace mock agents.
+- [x] Attempts (harness/model/agent_state) → AgentRun, one per attempt.
 
 ## DATA-004 — Worktrees
-Replace mock worktrees.
+- [x] Attempt worktree paths → Worktree, enriched with read-only git metadata
+  (branch/status/changed/ahead-behind/last commit).
 
 ## DATA-005 — Reports
-Replace mock reports.
+- [x] `data/<id>/report.md` scan → Report list + full content on get.
 
 ## DATA-006 — Routes/providers
-Replace mock configuration.
+- [x] `hand config` TOON parse → providers (harnesses) + 6-cell route grid,
+  enriched with live worker counts.
 
 ---
 
 # Phase 13 — Mutations
 
-> **Status: done against the mock API** — swap to real commands in Phase 11+.
+> **Status: DONE** — mapped onto real hand commands. Live dispatch additionally
+> requires hand's private runtime (treehouse + herdr, via hand's `bootstrap.ps1`).
 
 ## ACTION-001 — Create task
-Form fields:
-- [x] project
-- [x] title
-- [x] description
-- [x] scout/ship
-- [x] class
-- [x] tags
-- [x] optional route/provider *(route/provider override deferred until routing
-  semantics are known)*
+- [x] write brief to `data/<id>/brief.md` (slug id, uniqueness-checked) →
+      `hand spawn <id> <project> [--scout]`; dialog states a worker is dispatched
+- [x] project / title / description / scout-ship / class / tags form fields
 
 ---
 
 ## ACTION-002 — Send instruction
+- [x] `hand send <id> <msg> --wait 10s`
 - [x] validation
 - [x] optimistic pending UI
-- [x] error handling
+- [x] error handling *(hand exit 6/7 retry-safety surfaced)*
 
 ---
 
 ## ACTION-003 — Retry task
+- [x] `hand reopen <id>`
 - [x] confirmation if needed
 - [x] refresh task state
 - [x] toast
@@ -687,15 +697,15 @@ Form fields:
 ---
 
 ## ACTION-004 — Stop task
-- [x] confirmation
-- [x] backend command *(mock)*
+- [x] `hand teardown <id> --force` with explicit confirmation dialog
+- [x] backend command
 - [x] refresh agents/tasks
 
 ---
 
 ## ACTION-005 — Promote scout
+- [x] `hand promote <id>`
 - [x] source report reference
-- [x] generated ship task
 - [x] task link
 
 ---
@@ -709,8 +719,6 @@ Form fields:
 
 # Phase 14 — Local Integrations
 
-> **Status: mock-mode complete; real execution requires the Tauri backend.**
-
 ## LOCAL-001 — Preferred editor
 Support:
 - [x] VS Code
@@ -721,20 +729,20 @@ Support:
 ---
 
 ## LOCAL-002 — Open worktree
-- [x] editor *(mock)*
-- [x] file manager *(mock)*
-- [x] terminal *(mock)*
+- [x] editor *(fixed executable spawn)*
+- [x] file manager *(explorer/open/xdg-open)*
+- [x] terminal *(wt / cmd / common Linux terminals)*
 
 ---
 
 ## LOCAL-003 — Git metadata
 Read:
-- [!] branch *(mock data only)*
-- [!] dirty state
-- [!] changed files
-- [!] staged files
-- [!] last commit
-- [!] ahead/behind
+- [x] branch
+- [x] dirty state
+- [x] changed files
+- [ ] staged files *(deferred — needs porcelain parse v2)*
+- [x] last commit
+- [x] ahead/behind
 
 ---
 
@@ -833,10 +841,9 @@ Only implement if confirmed safe by HAND-004.
 # Phase 18 — Tests
 
 ## TEST-001 — Parser fixtures
-- [!] project parsing *(no real parsers yet — blocked on Phase 0/11)*
-- [!] task parsing
-- [!] agent parsing
-- [!] report parsing
+- [x] TOON table parser unit tests *(Rust)*
+- [~] status/project JSON fixtures *(shapes verified against hand 0.6.0 source;
+  recorded-fixture tests pending)*
 
 ---
 
@@ -883,10 +890,10 @@ Only implement if confirmed safe by HAND-004.
 ---
 
 ## PACK-002 — Windows build
-- [!] build
-- [!] install
-- [!] launch
-- [!] local process integration
+- [x] build *(debug + release verified; app boots and runs against a live fleet)*
+- [ ] install *(bundle/installer untested)*
+- [x] launch
+- [x] local process integration *(hand invocations with pinned HAND_HOME)*
 
 ---
 

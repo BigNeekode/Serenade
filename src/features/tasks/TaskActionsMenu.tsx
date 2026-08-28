@@ -133,7 +133,7 @@ export function TaskActionsMenu({ task }: { task: Task }) {
         open={confirmStop}
         onClose={() => setConfirmStop(false)}
         title={`Stop task ${task.id}?`}
-        description="The assigned worker will be terminated. The worktree and any commits stay in place."
+        description="This runs `hand teardown --force`: the task is finalized, its worktree is returned to the pool, and the worker pane is closed. Commits already pushed stay safe."
         confirmLabel="Stop worker"
         danger
         loading={stop.isPending}

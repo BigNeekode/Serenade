@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { BrowserRouter } from "react-router-dom";
+import { HashRouter } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Providers } from "./providers";
 import { Router } from "./router";
@@ -35,9 +35,9 @@ export function App() {
   return (
     <Providers>
       <EnvironmentGate>
-        <BrowserRouter>
+        <HashRouter>
           <Router />
-        </BrowserRouter>
+        </HashRouter>
       </EnvironmentGate>
     </Providers>
   );

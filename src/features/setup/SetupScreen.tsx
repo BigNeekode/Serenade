@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { CircleCheck, CircleX, Loader2 } from "lucide-react";
+import { CircleCheck, CircleX, Loader2, Sparkles } from "lucide-react";
 import type { EnvironmentStatus } from "@/types/domain";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { useUpdateConfig } from "@/hooks/use-config";
+import { useApi } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
 
 export function SetupScreen({
@@ -14,9 +15,11 @@ export function SetupScreen({
   onRevalidate: () => void;
 }) {
   const updateConfig = useUpdateConfig();
+  const api = useApi();
   const toast = useToast();
   const [handPath, setHandPath] = useState(env.handPath ?? "hand");
-  const [fleetPath, setFleetPath] = useState(env.fleetPath ?? "~/.hand/fleets/main");
+  const [fleetPath, setFleetPath] = useState(env.fleetPath ?? "");
+  const [initBusy, setInitBusy] = useState(false);
 
   const save = async () => {
     try {
@@ -28,6 +31,29 @@ export function SetupScreen({
       toast.showToast({ variant: "success", title: "Environment saved", description: "Re-validating fleet…" });
     } catch {
       toast.showToast({ variant: "error", title: "Could not save configuration" });
+    }
+  };
+
+  const initialize = async () => {
+    const path = fleetPath.trim();
+    if (!path) {
+      toast.showToast({ variant: "error", title: "Enter a fleet path first" });
+      return;
+    }
+    setInitBusy(true);
+    try {
+      await api.initializeFleet(path);
+      await updateConfig.mutateAsync({ fleetPath: path });
+      onRevalidate();
+      toast.showToast({ variant: "success", title: "Fleet initialized", description: path });
+    } catch (err) {
+      toast.showToast({
+        variant: "error",
+        title: "hand init failed",
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setInitBusy(false);
     }
   };
 
@@ -68,9 +94,19 @@ export function SetupScreen({
             <Field label="hand binary path" hint="Executable name on PATH, or an absolute path.">
               <Input value={handPath} onChange={(e) => setHandPath(e.target.value)} placeholder="hand" />
             </Field>
-            <Field label="Fleet path" hint="Directory of your hand fleet (e.g. ~/.hand/fleets/main).">
-              <Input value={fleetPath} onChange={(e) => setFleetPath(e.target.value)} placeholder="~/.hand/fleets/main" />
+            <Field label="Fleet path" hint="Directory of your hand fleet (run `hand init`, or use the button below).">
+              <Input
+                value={fleetPath}
+                onChange={(e) => setFleetPath(e.target.value)}
+                placeholder="e.g. C:\\dev\\hand-fleet"
+              />
             </Field>
+            {env.handFound && !env.fleetValid && (
+              <Button variant="secondary" size="md" className="w-full" onClick={initialize} disabled={initBusy}>
+                {initBusy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                Initialize a fleet at this path (hand init)
+              </Button>
+            )}
             <Button variant="primary" size="md" className="w-full" onClick={save} disabled={updateConfig.isPending}>
               {updateConfig.isPending && <Loader2 size={13} className="animate-spin" />}
               Save & validate

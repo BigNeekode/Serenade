@@ -5,12 +5,10 @@ import { LastUpdated } from "@/components/common/LastUpdated";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Badge, Mono } from "@/components/ui/badge";
 import { ErrorState, Skeleton } from "@/components/ui/feedback";
-import { useDiagnostics } from "@/hooks/use-config";
 import { useRoutes } from "@/hooks/use-routes";
 
 export function RoutesPage() {
   const routes = useRoutes();
-  const diagnostics = useDiagnostics();
 
   const providerName = (id: string) => routes.data?.providers.find((p) => p.id === id)?.name ?? id;
 
@@ -22,16 +20,16 @@ export function RoutesPage() {
     >
       {routes.isError && <ErrorState error={routes.error} onRetry={() => void routes.refetch()} />}
 
-      {diagnostics.data && !diagnostics.data.capabilities.supportsRouteWrite && (
-        <div className="flex items-start gap-2.5 rounded-xl border border-info/30 bg-info-soft px-4 py-3">
-          <Info size={14} className="mt-0.5 shrink-0 text-info" />
-          <p className="text-xs leading-relaxed text-fg-muted">
-            Route editing is <span className="text-info">read-only</span>: the connected{" "}
-            <span className="font-mono">hand</span> version has not been verified to support safe route
-            writes. Editing unlocks once the capability is confirmed (see docs/hand-integration-notes.md).
-          </p>
-        </div>
-      )}
+      <div className="flex items-start gap-2.5 rounded-xl border border-info/30 bg-info-soft px-4 py-3">
+        <Info size={14} className="mt-0.5 shrink-0 text-info" />
+        <p className="text-xs leading-relaxed text-fg-muted">
+          Routes map task type + execution class to an execution profile. This view is{" "}
+          <span className="text-info">read-only</span> for now — Serenade's route editor is not
+          implemented yet. hand itself supports validated writes via{" "}
+          <span className="font-mono">hand config route set</span>; routing picks the profile
+          automatically at spawn time.
+        </p>
+      </div>
 
       <Card>
         <CardHeader title="Providers" />

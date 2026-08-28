@@ -40,6 +40,9 @@ export class TauriSerenadeApi implements SerenadeApi {
   async getDiagnostics(): Promise<Diagnostics> {
     return invoke("diagnostics_get");
   }
+  async initializeFleet(path: string): Promise<void> {
+    return invoke("fleet_init", { path });
+  }
 
   async listProjects(): Promise<Project[]> {
     return invoke("projects_list");

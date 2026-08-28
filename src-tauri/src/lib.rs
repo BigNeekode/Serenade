@@ -1,0 +1,882 @@
+mod adapter;
+mod config;
+mod domain;
+mod error;
+mod fleet_files;
+mod git;
+mod hand;
+mod local;
+
+use crate::config::{AppConfig, ConfigStore};
+use crate::domain::*;
+use crate::error::{Code, SerenadeError};
+use crate::fleet_files::{valid_task_id, FleetFiles};
+use crate::hand::model::{FleetJson, ProjectJson, StatusJson};
+use crate::hand::{toon, HandRunner};
+use serde::Deserialize;
+use std::collections::HashSet;
+use std::path::PathBuf;
+use tauri::Manager;
+
+struct AppCtx {
+    config: ConfigStore,
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Build runner + fleet files from the current config. Errors when the
+/// environment is not usable.
+fn setup() -> Result<(AppConfig, HandRunner, FleetFiles), SerenadeError> {
+    let ctx = CTX
+        .get()
+        .expect("app context initialized in setup hook");
+    let config = ctx.config.load();
+    let fleet = config
+        .fleet_path
+        .clone()
+        .filter(|p| !p.trim().is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| SerenadeError::invalid_fleet("No fleet path configured.".into()))?;
+    if !fleet_home_valid(&fleet) {
+        return Err(SerenadeError::invalid_fleet(format!(
+            "{} is not a secondhand home (no state/hand.db).",
+            fleet.display()
+        )));
+    }
+    let runner = HandRunner {
+        binary: config.hand_binary_path.clone(),
+        fleet_home: Some(fleet.clone()),
+    };
+    Ok((config, runner, FleetFiles::new(fleet)))
+}
+
+fn fleet_home_valid(path: &std::path::Path) -> bool {
+    let has_db = path.join("state").is_dir() && path.join("state").join("hand.db").is_file();
+    let legacy = path.join("data").join("projects.md").is_file() && path.join("state").is_dir();
+    has_db || legacy
+}
+
+/// Runner with no HAND_HOME — for version probes and `hand init`.
+fn global_runner(config: &AppConfig) -> HandRunner {
+    HandRunner {
+        binary: config.hand_binary_path.clone(),
+        fleet_home: None,
+    }
+}
+
+fn fleet_status(runner: &HandRunner) -> Result<FleetJson, SerenadeError> {
+    runner.json(&["status", "--json"], 20)
+}
+
+fn task_status(runner: &HandRunner, task_id: &str) -> Result<StatusJson, SerenadeError> {
+    if !valid_task_id(task_id) {
+        return Err(SerenadeError::new(
+            Code::InvalidPath,
+            "Invalid task id",
+            format!("{task_id:?} is not a valid hand task id."),
+        ));
+    }
+    let status: StatusJson = runner.json(&["status", task_id, "--json"], 20)?;
+    if status.id.is_empty() {
+        return Err(SerenadeError::task_not_found(task_id));
+    }
+    Ok(status)
+}
+
+fn held_ids(fleet: &FleetJson) -> HashSet<String> {
+    fleet.holds.iter().map(|h| h.id.clone()).collect()
+}
+
+/// Static context stored once during app setup (config store path only).
+static CTX: std::sync::OnceLock<AppCtx> = std::sync::OnceLock::new();
+
+// ---------------------------------------------------------------------------
+// Config & environment commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn config_get() -> Result<AppConfig, SerenadeError> {
+    Ok(CTX.get().expect("ctx").config.load())
+}
+
+#[tauri::command]
+fn config_update(input: serde_json::Value) -> Result<AppConfig, SerenadeError> {
+    CTX.get()
+        .expect("ctx")
+        .config
+        .update(input)
+        .map_err(|e| SerenadeError::new(Code::CommandFailed, "Could not save config", e))
+}
+
+#[tauri::command]
+fn environment_validate() -> Result<EnvironmentStatus, SerenadeError> {
+    let config = CTX.get().expect("ctx").config.load();
+    let mut issues = Vec::new();
+
+    let version_result = global_runner(&config).capture(&["--version"], 10);
+    let (hand_found, hand_version) = match version_result {
+        Ok(Ok(stdout)) => (true, Some(stdout.trim().to_string())),
+        Ok(Err(doc)) => {
+            issues.push(format!("hand --version failed: {}", doc.message));
+            (false, None)
+        }
+        Err(e) => {
+            issues.push(e.message.clone());
+            (false, None)
+        }
+    };
+    if !hand_found {
+        issues.push("hand executable not found — configure the binary path in Settings.".into());
+    }
+
+    let fleet_path = config
+        .fleet_path
+        .clone()
+        .filter(|p| !p.trim().is_empty());
+    let fleet_valid = fleet_path
+        .as_ref()
+        .map(|p| fleet_home_valid(PathBuf::from(p).as_path()))
+        .unwrap_or(false);
+    if !fleet_valid {
+        issues.push("Fleet path is not set or is not a secondhand home (needs state/hand.db).".into());
+    }
+
+    Ok(EnvironmentStatus {
+        ok: hand_found && fleet_valid,
+        hand_found,
+        hand_path: Some(config.hand_binary_path.clone()),
+        hand_version,
+        fleet_valid,
+        fleet_path,
+        issues,
+    })
+}
+
+#[tauri::command]
+fn fleet_init(path: String) -> Result<(), SerenadeError> {
+    let config = CTX.get().expect("ctx").config.load();
+    if path.trim().is_empty() {
+        return Err(SerenadeError::new(
+            Code::InvalidPath,
+            "Invalid path",
+            "Fleet path must not be empty.",
+        ));
+    }
+    global_runner(&config).expect(&["init", &path], 90)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn diagnostics_get() -> Result<Diagnostics, SerenadeError> {
+    let config = CTX.get().expect("ctx").config.load();
+    let version = global_runner(&config)
+        .capture(&["--version"], 10)
+        .ok()
+        .and_then(|r| r.ok())
+        .map(|s| s.trim().to_string());
+    let fleet_valid = config
+        .fleet_path
+        .as_ref()
+        .map(|p| fleet_home_valid(PathBuf::from(p).as_path()));
+    Ok(Diagnostics {
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        mode: "tauri".to_string(),
+        tauri_version: Some(tauri::VERSION.to_string()),
+        hand_path: Some(config.hand_binary_path.clone()),
+        hand_version: version,
+        fleet_path: config.fleet_path.clone(),
+        fleet_valid,
+        capabilities: HandCapabilities {
+            supports_structured_task_output: true,
+            supports_pause: false,
+            supports_route_write: true,
+            supports_task_message: true,
+            supports_report_listing: true,
+        },
+        recent_errors: Vec::new(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn projects_list() -> Result<Vec<Project>, SerenadeError> {
+    let (config, runner, files) = setup()?;
+    let raw: Vec<ProjectJson> = runner.json(&["project", "list", "--json"], 15)?;
+    let _ = config;
+    Ok(raw
+        .into_iter()
+        .map(|p| {
+            let repo_path = files
+                .home
+                .join("projects")
+                .join(&p.name)
+                .to_str()
+                .map(str::to_string);
+            Project {
+                id: p.name.clone(),
+                name: p.name,
+                repo_path,
+                repo_url: if p.url.is_empty() { None } else { Some(p.url) },
+                status: if p.gate_issue.is_some() { "paused" } else { "active" }.to_string(),
+                default_branch: None,
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn project_get(project_id: String) -> Result<Project, SerenadeError> {
+    let projects = projects_list()?;
+    projects
+        .into_iter()
+        .find(|p| p.id == project_id)
+        .ok_or_else(|| {
+            SerenadeError::new(
+                Code::ProjectNotFound,
+                "Project not found",
+                format!("No project named {project_id}."),
+            )
+            .not_recoverable()
+        })
+}
+
+// ---------------------------------------------------------------------------
+// Tasks
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn tasks_list(project_id: Option<String>) -> Result<Vec<Task>, SerenadeError> {
+    let (_, runner, files) = setup()?;
+    let fleet = fleet_status(&runner)?;
+    let held = held_ids(&fleet);
+    Ok(fleet
+        .tasks
+        .iter()
+        .filter(|t| project_id.as_ref().is_none_or(|p| *p == t.project))
+        .map(|s| adapter::to_task(s, &files, held.contains(&s.id)))
+        .collect())
+}
+
+#[tauri::command]
+fn task_get(task_id: String) -> Result<Task, SerenadeError> {
+    let (_, runner, files) = setup()?;
+    let s = task_status(&runner, &task_id)?;
+    let held = s.held.is_some();
+    Ok(adapter::to_task(&s, &files, held))
+}
+
+// ---------------------------------------------------------------------------
+// Agents
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn agents_list() -> Result<Vec<AgentRun>, SerenadeError> {
+    let (_, runner, _) = setup()?;
+    let fleet = fleet_status(&runner)?;
+    let mut agents = Vec::new();
+    for s in &fleet.tasks {
+        if let Some(attempts) = &s.attempts {
+            if attempts.is_empty() {
+                agents.push(adapter::to_agent_run(s));
+                continue;
+            }
+            let active_ordinal = s.attempt_ordinal.unwrap_or(0);
+            for a in attempts {
+                let mut run = agent_from_attempt(s, a);
+                if a.ordinal == active_ordinal {
+                    // enrich with the live agent_state classification
+                    if a.lifecycle == "running" {
+                        run.status = match s.agent_state.as_deref().unwrap_or("unknown") {
+                            "working" => "running".into(),
+                            "idle" => "waiting".into(),
+                            "blocked" => "blocked".into(),
+                            "done" => "completed".into(),
+                            other => other.to_string(),
+                        };
+                    }
+                    run.heartbeat_at = s.last_report_at.clone();
+                }
+                agents.push(run);
+            }
+        } else {
+            agents.push(adapter::to_agent_run(s));
+        }
+    }
+    agents.sort_by(|a, b| b.id.cmp(&a.id));
+    Ok(agents)
+}
+
+fn agent_from_attempt(s: &StatusJson, a: &hand::model::AttemptJson) -> AgentRun {
+    AgentRun {
+        id: adapter::agent_id_for(&s.id, a.ordinal),
+        task_id: Some(s.id.clone()),
+        project_id: Some(s.project.clone()),
+        provider: a.harness.clone().unwrap_or_else(|| "unknown".into()),
+        model: a.model.clone(),
+        status: match a.lifecycle.as_str() {
+            "provisioning" => "starting".to_string(),
+            "running" => "running".to_string(),
+            "completed" => "completed".to_string(),
+            "failed" => "failed".to_string(),
+            "interrupted" => "stopped".to_string(),
+            _ => "unknown".to_string(),
+        },
+        branch: a.worktree.as_ref().map(|w| {
+            std::path::Path::new(w)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| w.clone())
+        }),
+        started_at: s.created_at.clone(),
+        ended_at: None,
+        heartbeat_at: None,
+        log_path: Some(format!("state/{}.status", s.id)),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Worktrees
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn worktrees_list(project_id: Option<String>) -> Result<Vec<Worktree>, SerenadeError> {
+    let (_, runner, _) = setup()?;
+    let fleet = fleet_status(&runner)?;
+    let mut out = Vec::new();
+    for s in &fleet.tasks {
+        if project_id.as_ref().is_some_and(|p| *p != s.project) {
+            continue;
+        }
+        let Some(mut w) = adapter::to_worktree(s) else { continue };
+        // Read-only git enrichment (best-effort; path may be back in the pool).
+        if std::path::Path::new(&w.path).is_dir() {
+            let info = git::inspect(&w.path);
+            if let Some(b) = info.branch {
+                w.branch = b;
+            }
+            w.git_status = info.git_status;
+            w.changed_files = info.changed_files;
+            w.ahead_behind = info.ahead_behind;
+            w.last_commit = info.last_commit;
+        }
+        out.push(w);
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Reports
+// ---------------------------------------------------------------------------
+
+fn report_from_content(
+    task_id: &str,
+    project_id: &str,
+    path: PathBuf,
+    created_at: Option<String>,
+    with_content: bool,
+) -> Report {
+    let raw = std::fs::read_to_string(&path).unwrap_or_default();
+    let title = fleet_files::brief_title_from(&raw);
+    let summary = fleet_files::strip_front_matter(&raw)
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("---"))
+        .map(|l| l.chars().take(200).collect::<String>());
+    Report {
+        id: format!("r_{task_id}"),
+        task_id: task_id.to_string(),
+        project_id: project_id.to_string(),
+        kind: "scout_report".to_string(),
+        title: if title.is_empty() { format!("Report for {task_id}") } else { title },
+        path: Some(path.to_string_lossy().into_owned()),
+        summary,
+        content: with_content.then_some(raw),
+        created_at,
+    }
+}
+
+#[tauri::command]
+fn reports_list(project_id: Option<String>) -> Result<Vec<Report>, SerenadeError> {
+    let (_, runner, files) = setup()?;
+    let fleet = fleet_status(&runner)?;
+    let project_of: std::collections::HashMap<String, String> = fleet
+        .tasks
+        .iter()
+        .map(|s| (s.id.clone(), s.project.clone()))
+        .collect();
+    let mut out = Vec::new();
+    for (task_id, mtime) in files.list_report_tasks() {
+        let proj = project_of
+            .get(&task_id)
+            .cloned()
+            .unwrap_or_default();
+        if project_id.as_ref().is_some_and(|p| *p != proj) {
+            continue;
+        }
+        let path = files.report_file(&task_id);
+        out.push(report_from_content(
+            &task_id,
+            &proj,
+            path,
+            Some(fleet_files::iso_from_system_time(mtime)),
+            false,
+        ));
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+fn report_get(report_id: String) -> Result<Report, SerenadeError> {
+    let (_, runner, files) = setup()?;
+    let task_id = report_id
+        .strip_prefix("r_")
+        .unwrap_or(&report_id)
+        .to_string();
+    if !valid_task_id(&task_id) || !files.report_exists(&task_id) {
+        return Err(SerenadeError::new(
+            Code::NotFound,
+            "Report not found",
+            format!("No report for {task_id}."),
+        )
+        .not_recoverable());
+    }
+    let fleet = fleet_status(&runner)?;
+    let project = fleet
+        .tasks
+        .iter()
+        .find(|s| s.id == task_id)
+        .map(|s| s.project.clone())
+        .unwrap_or_default();
+    let path = files.report_file(&task_id);
+    let created = fleet_files::file_mtime(&path);
+    Ok(report_from_content(&task_id, &project, path, created, true))
+}
+
+// ---------------------------------------------------------------------------
+// Routes & providers
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn routes_list() -> Result<RoutesPayload, SerenadeError> {
+    let (_, runner, _) = setup()?;
+    let doc = runner.expect(&["config"], 15)?;
+    let mut providers = Vec::new();
+    for row in toon::table(&doc, "harnesses") {
+        if row.len() < 2 {
+            continue;
+        }
+        let installed = row[1] == "true";
+        providers.push(Provider {
+            id: row[0].clone(),
+            name: row[0].clone(),
+            enabled: installed,
+            connected: installed,
+            default_model: None,
+            active_workers: 0,
+            tasks_completed: 0,
+            recent_error: None,
+        });
+    }
+    let mut routes = Vec::new();
+    for (i, row) in toon::table(&doc, "routes").into_iter().enumerate() {
+        if row.len() < 4 {
+            continue;
+        }
+        let configured = row[3] == "configured";
+        let profile = row[2].clone();
+        routes.push(RouteRule {
+            id: format!("{}-{}", row[0], row[1]),
+            task_type: Some(row[0].clone()),
+            execution_class: Some(row[1].clone()),
+            provider_id: profile.clone(),
+            model: profile,
+            priority: (i as u32 + 1) * 10,
+            enabled: configured,
+            fallback: None,
+        });
+    }
+    // Enrich providers with live usage when the fleet is reachable.
+    if let Ok(fleet) = fleet_status(&runner) {
+        for p in &mut providers {
+            p.active_workers = fleet
+                .tasks
+                .iter()
+                .filter(|t| {
+                    t.harness.as_deref() == Some(p.id.as_str())
+                        && matches!(t.attempt_lifecycle.as_deref(), Some("provisioning") | Some("running"))
+                })
+                .count() as u32;
+            p.tasks_completed = fleet
+                .tasks
+                .iter()
+                .filter(|t| {
+                    t.harness.as_deref() == Some(p.id.as_str())
+                        && t.task_lifecycle.as_deref() == Some("terminal")
+                })
+                .count() as u32;
+        }
+    }
+    for row in toon::table(&doc, "problems") {
+        if row.len() >= 5 && row[0] == "missing-route" {
+            continue; // surfaced via route `enabled` flags
+        }
+    }
+    Ok(RoutesPayload { providers, routes })
+}
+
+// ---------------------------------------------------------------------------
+// Events & logs
+// ---------------------------------------------------------------------------
+
+fn event_severity(kind: &str) -> &'static str {
+    match kind {
+        "done" | "reported-done" | "report-done" | "pr-merged" | "usage-limit-resumed" => "success",
+        "failed" | "report-failed" => "error",
+        "blocked" | "report-blocked" | "needs-decision" | "report-needs-decision" | "stale"
+        | "parked" | "idle-unreported" | "gate-absent" | "gate-unknown" | "pr-not-recorded"
+        | "pr-record-unknown" | "report-malformed" | "usage-limit" | "usage-limit-stuck" => "warning",
+        _ => "info",
+    }
+}
+
+#[tauri::command]
+fn events_recent(limit: Option<u32>) -> Result<Vec<FleetEvent>, SerenadeError> {
+    let (_, runner, files) = setup()?;
+    let log_mtime = fleet_files::file_mtime(&files.events_log()).unwrap_or_default();
+    let lines = files.read_events_log();
+    let mut out = Vec::new();
+    for (i, line) in lines.into_iter().take(limit.unwrap_or(50) as usize).enumerate() {
+        let mut parts = line.splitn(3, ' ');
+        let kind = parts.next().unwrap_or("event").to_string();
+        let target = parts.next().unwrap_or("").trim_matches(':').to_string();
+        let note = parts.next().unwrap_or("").trim().to_string();
+        let task_id = valid_task_id(&target).then_some(target);
+        let project_id = task_id.as_ref().and_then(|id| {
+            fleet_status(&runner)
+                .ok()
+                .and_then(|f| f.tasks.iter().find(|t| t.id == *id).map(|t| t.project.clone()))
+        });
+        out.push(FleetEvent {
+            id: format!("e{i}"),
+            kind: kind.clone(),
+            message: if note.is_empty() { line.clone() } else { note },
+            project_id,
+            task_id,
+            severity: event_severity(&kind).to_string(),
+            created_at: log_mtime.clone(),
+        });
+    }
+    Ok(out)
+}
+
+fn log_level_for(line: &str) -> &'static str {
+    let head = line.split(':').next().unwrap_or("").trim();
+    match head {
+        "failed" => "error",
+        "paused" | "blocked" | "needs-decision" => "warn",
+        "done" => "success",
+        _ => "info",
+    }
+}
+
+#[tauri::command]
+fn task_logs_read(
+    request: serde_json::Value,
+) -> Result<LogChunkResponse, SerenadeError> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Req {
+        task_id: String,
+        cursor: Option<String>,
+        limit: Option<usize>,
+    }
+    let req: Req =
+        serde_json::from_value(request).map_err(|e| {
+            SerenadeError::new(Code::CommandFailed, "Invalid log request", e.to_string())
+        })?;
+    if !valid_task_id(&req.task_id) {
+        return Err(SerenadeError::new(
+            Code::InvalidPath,
+            "Invalid task id",
+            req.task_id,
+        ));
+    }
+    let (_, _, files) = setup()?;
+    let lines = files.read_status_lines(&req.task_id)?;
+    let mtime = fleet_files::file_mtime(&files.status_file(&req.task_id)).unwrap_or_default();
+    let start = req
+        .cursor
+        .and_then(|c| c.parse::<usize>().ok())
+        .unwrap_or(0);
+    let limit = req.limit.unwrap_or(100).clamp(1, 500);
+    let slice: Vec<LogLine> = lines
+        .iter()
+        .skip(start)
+        .take(limit)
+        .enumerate()
+        .map(|(i, line)| LogLine {
+            id: format!("{}-L{}", req.task_id, start + i),
+            ts: mtime.clone(),
+            source: "worker".to_string(),
+            level: log_level_for(line).to_string(),
+            message: line.clone(),
+        })
+        .collect();
+    let next = start + slice.len();
+    Ok(LogChunkResponse {
+        lines: slice,
+        next_cursor: (next < lines.len()).then_some(next.to_string()),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Mutations
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateTaskInput {
+    project_id: String,
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    execution_class: Option<String>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+    #[serde(default)]
+    _source_task_id: Option<String>,
+    #[serde(default)]
+    _source_report_id: Option<String>,
+}
+
+fn slugify(title: &str) -> String {
+    let mut slug: String = title
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c
+            } else if c == '.' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    // collapse runs of '-', trim, clamp length
+    let mut collapsed = String::new();
+    let mut prev_dash = false;
+    for c in slug.chars() {
+        if c == '-' {
+            if !prev_dash && !collapsed.is_empty() {
+                collapsed.push('-');
+            }
+            prev_dash = true;
+        } else {
+            collapsed.push(c);
+            prev_dash = false;
+        }
+    }
+    slug = collapsed.trim_matches('-').to_string();
+    slug.chars().take(40).collect::<String>().trim_matches('-').to_string()
+}
+
+#[tauri::command]
+fn task_create(input: serde_json::Value) -> Result<Task, SerenadeError> {
+    let parsed: CreateTaskInput =
+        serde_json::from_value(input).map_err(|e| {
+            SerenadeError::new(Code::CommandFailed, "Invalid task input", e.to_string())
+        })?;
+    let (_, runner, files) = setup()?;
+
+    let title = parsed.title.trim();
+    if title.len() < 3 {
+        return Err(SerenadeError::new(
+            Code::CommandFailed,
+            "Title too short",
+            "Task titles must be at least 3 characters.",
+        ));
+    }
+    let kind = if parsed.kind == "scout" { "scout" } else { "ship" };
+    let execution_class = parsed
+        .execution_class
+        .as_deref()
+        .filter(|c| ["mechanical", "standard", "deep"].contains(c))
+        .unwrap_or("standard");
+
+    // Derive a unique task id from the title.
+    let base = slugify(title);
+    if base.is_empty() {
+        return Err(SerenadeError::new(
+            Code::InvalidPath,
+            "Could not derive a task id",
+            "The title must contain letters or digits.",
+        ));
+    }
+    let fleet = fleet_status(&runner)?;
+    let existing: HashSet<String> = fleet.tasks.iter().map(|t| t.id.clone()).collect();
+    let mut id = base.clone();
+    let mut n = 1;
+    while existing.contains(&id) || files.brief_file(&id).exists() {
+        n += 1;
+        id = format!("{base}-{n}");
+    }
+
+    files.write_brief(&id, title, parsed.description.as_deref(), execution_class, &parsed.tags.clone().unwrap_or_default())?;
+
+    // Dispatch the worker: hand spawn (scout flag when requested).
+    let mut args: Vec<&str> = vec!["spawn", &id, &parsed.project_id];
+    if kind == "scout" {
+        args.push("--scout");
+    }
+    runner.expect(&args, 180)?;
+
+    let s = task_status(&runner, &id)?;
+    Ok(adapter::to_task(&s, &files, false))
+}
+
+#[tauri::command]
+fn task_send_message(task_id: String, message: String) -> Result<(), SerenadeError> {
+    let (_, runner, _) = setup()?;
+    let msg = message.trim();
+    if msg.is_empty() {
+        return Err(SerenadeError::new(
+            Code::CommandFailed,
+            "Empty message",
+            "The instruction message must not be empty.",
+        ));
+    }
+    // Bounded composer wait keeps the UI responsive; hand encodes
+    // retry-safety in exit codes 6/7 and the error document.
+    runner.expect(&["send", &task_id, msg, "--wait", "10s"], 30)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn task_retry(task_id: String) -> Result<(), SerenadeError> {
+    let (_, runner, _) = setup()?;
+    runner.expect(&["reopen", &task_id], 180)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn task_stop(task_id: String) -> Result<(), SerenadeError> {
+    let (_, runner, _) = setup()?;
+    // Destructive: the UI must confirm before invoking (architecture.md §21).
+    runner.expect(&["teardown", &task_id, "--force"], 120)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn task_promote(task_id: String) -> Result<Task, SerenadeError> {
+    let (_, runner, files) = setup()?;
+    runner.expect(&["promote", &task_id], 180)?;
+    let s = task_status(&runner, &task_id)?;
+    Ok(adapter::to_task(&s, &files, false))
+}
+
+#[tauri::command]
+fn worktree_cleanup(worktree_id: String) -> Result<(), SerenadeError> {
+    let (_, runner, _) = setup()?;
+    // worktree_id == task id in this adapter. teardown without --force:
+    // hand refuses when unlanded work exists, which is the safety we want.
+    runner.expect(&["teardown", &worktree_id], 120)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Local tooling
+// ---------------------------------------------------------------------------
+
+fn worktree_path_for(task_id: &str) -> Result<PathBuf, SerenadeError> {
+    let (_, runner, _) = setup()?;
+    let s = task_status(&runner, task_id)?;
+    let path = s.worktree.ok_or_else(|| {
+        SerenadeError::new(
+            Code::WorktreeNotFound,
+            "No worktree for this task",
+            format!("Task {task_id} has no worktree on record."),
+        )
+    })?;
+    local::validate_worktree_path(&path)
+}
+
+#[tauri::command]
+fn worktree_open_editor(worktree_id: String) -> Result<(), SerenadeError> {
+    let (config, _, _) = setup()?;
+    let path = worktree_path_for(&worktree_id)?;
+    local::open_editor(&path, &config.preferred_editor, config.custom_editor_path.as_deref())
+}
+
+#[tauri::command]
+fn worktree_open_folder(worktree_id: String) -> Result<(), SerenadeError> {
+    let path = worktree_path_for(&worktree_id)?;
+    local::open_folder(&path)
+}
+
+#[tauri::command]
+fn worktree_open_terminal(worktree_id: String) -> Result<(), SerenadeError> {
+    let path = worktree_path_for(&worktree_id)?;
+    local::open_terminal(&path)
+}
+
+// ---------------------------------------------------------------------------
+// App entry
+// ---------------------------------------------------------------------------
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .setup(|app| {
+            let data_dir = app.path().app_data_dir()?;
+            let _ = std::fs::create_dir_all(&data_dir);
+            let _ = CTX.set(AppCtx {
+                config: ConfigStore::new(data_dir),
+            });
+            if cfg!(debug_assertions) {
+                app.handle().plugin(
+                    tauri_plugin_log::Builder::default()
+                        .level(log::LevelFilter::Info)
+                        .build(),
+                )?;
+            }
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            config_get,
+            config_update,
+            environment_validate,
+            fleet_init,
+            diagnostics_get,
+            projects_list,
+            project_get,
+            tasks_list,
+            task_get,
+            agents_list,
+            worktrees_list,
+            reports_list,
+            report_get,
+            routes_list,
+            events_recent,
+            task_logs_read,
+            task_create,
+            task_send_message,
+            task_retry,
+            task_stop,
+            task_promote,
+            worktree_cleanup,
+            worktree_open_editor,
+            worktree_open_folder,
+            worktree_open_terminal,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

@@ -491,7 +491,7 @@ export class MockSerenadeApi implements SerenadeApi {
       capabilities: {
         supportsStructuredTaskOutput: true,
         supportsPause: false,
-        supportsRouteWrite: false,
+        supportsRouteWrite: true,
         supportsTaskMessage: true,
         supportsReportListing: true,
       },
@@ -501,6 +501,11 @@ export class MockSerenadeApi implements SerenadeApi {
       fleetValid: env.fleetValid,
       recentErrors: this.recentErrors.slice(0, 10),
     };
+  }
+
+  async initializeFleet(path: string): Promise<void> {
+    await delay();
+    this.config = { ...this.config, fleetPath: path.trim() || null };
   }
 
   // -- reads ------------------------------------------------------------------

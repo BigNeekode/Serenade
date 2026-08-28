@@ -247,7 +247,7 @@ export function WorktreesPage() {
         open={!!cleanupTarget}
         onClose={() => setCleanupTarget(null)}
         title="Cleanup worktree?"
-        description="This permanently removes the worktree directory and its branch checkout."
+        description="This runs `hand teardown` for the task: it finalizes the task and returns the worktree lease to the pool. hand refuses if unlanded work would be lost."
         confirmLabel="Remove worktree"
         danger
         loading={cleanup.isPending}
