@@ -1,5 +1,8 @@
-//! Maps hand's statusJSON onto Serenade's domain model.
-//! See docs/hand-integration-notes.md §10 for the status derivation table.
+//! Maps hand's legacy statusJSON onto Serenade's presentation domain.
+//! See docs/hand-integration-notes.md §10 for the legacy status derivation table.
+//!
+//! Important: these are display projections only. Worker/provider state and
+//! WorkerReport claims must not be promoted into canonical lifecycle truth.
 
 use crate::domain::{AgentRun, Task, Worktree};
 use crate::fleet_files::FleetFiles;
@@ -9,35 +12,40 @@ pub fn agent_id_for(task_id: &str, ordinal: i64) -> String {
     format!("{task_id}#a{ordinal}")
 }
 
-/// Derive the UI task status from hand lifecycle fields.
+/// Derive a legacy UI task status from Hand lifecycle fields.
+///
+/// The status is presentation-only. In particular, provider/agent `done` and a
+/// WorkerReport `done` claim do not complete an active Attempt. Terminal "done"
+/// is based on delivery/merge or Hand's Attempt lifecycle instead.
 pub fn derive_task_status(s: &StatusJson, held: bool) -> &'static str {
     let reported = s.reported.as_ref().map(|r| r.state.as_str()).unwrap_or("");
     let attempt = s.attempt_lifecycle.as_deref().unwrap_or("");
     let open = s.task_lifecycle.as_deref().unwrap_or("open") == "open";
     let merged = s.merged.unwrap_or(false);
     let delivered = s.delivered_at.is_some();
-    let agent_state = s.agent_state.as_deref().unwrap_or("unknown");
 
     if open {
         if held || matches!(reported, "blocked" | "needs-decision") {
             return "blocked";
         }
-        if matches!(reported, "failed") {
-            return "failed";
-        }
         if matches!(attempt, "failed" | "interrupted") {
             return "failed";
         }
         if matches!(attempt, "provisioning" | "running") {
-            // The harness finished its turn (herdr: done) but no report line
-            // arrived — work is sitting in the worktree awaiting the operator.
-            if agent_state == "done" {
-                return "review";
-            }
+            // Do not turn agent_state=done into review/completion. The provider
+            // may merely have finished one turn while the Attempt is still live.
             return if s.kind == "scout" { "scouting" } else { "in_progress" };
         }
+        if matches!(attempt, "completed") {
+            return "review";
+        }
+        if matches!(reported, "failed") {
+            // A report is still only a claim; use it here as a presentation
+            // warning when no stronger active lifecycle state exists.
+            return "failed";
+        }
         if matches!(reported, "done") {
-            // completed work awaiting landing/review
+            // Claim-driven actionability only; this does not make the Task done.
             return "review";
         }
         if matches!(reported, "paused") {
@@ -45,11 +53,13 @@ pub fn derive_task_status(s: &StatusJson, held: bool) -> &'static str {
         }
         return if s.kind == "scout" { "scouting" } else { "in_progress" };
     }
-    // terminal
-    if merged || delivered || matches!(reported, "done") {
+
+    // Terminal presentation follows Hand lifecycle/delivery facts rather than
+    // a worker claim. This keeps `reported: done` distinct from completion.
+    if merged || delivered || matches!(attempt, "completed") {
         return "done";
     }
-    if matches!(attempt, "failed") || matches!(reported, "failed") {
+    if matches!(attempt, "failed") {
         return "failed";
     }
     if matches!(attempt, "interrupted") {
@@ -58,16 +68,19 @@ pub fn derive_task_status(s: &StatusJson, held: bool) -> &'static str {
     "stopped"
 }
 
-/// Map agent_state + attempt lifecycle onto the UI agent status vocabulary.
+/// Map Attempt lifecycle + provider activity onto the legacy UI vocabulary.
+///
+/// `agent_state=done` is deliberately **not** `completed`: completion belongs to
+/// Attempt lifecycle. While the Attempt is still running it is presented as
+/// waiting for the next canonical transition/operator action.
 pub fn derive_agent_status(s: &StatusJson) -> &'static str {
     let attempt = s.attempt_lifecycle.as_deref().unwrap_or("");
     match attempt {
         "provisioning" => "starting",
         "running" => match s.agent_state.as_deref().unwrap_or("unknown") {
             "working" => "running",
-            "idle" => "waiting",
+            "idle" | "done" => "waiting",
             "blocked" => "blocked",
-            "done" => "completed",
             _ => "unknown",
         },
         "completed" => "completed",
