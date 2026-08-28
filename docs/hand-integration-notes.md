@@ -126,7 +126,9 @@ help[N]:
 - `hand config` (TOON): `harnesses[N]{name,installed,model,effort}`, `profiles[N]{name,harness,model,effort}`, `routes[6]{kind,execution_class,profile,state}`, `problems[N]{...}`.
 - Route grid = full cross-product scout/ship × mechanical/standard/deep (6 cells); state per cell: `configured|missing|malformed`.
 - Writes: `hand config route set`, `hand config profile set` — validated by hand. UI stays read-only for now (capability-gated).
-- Harnesses observed installed: claude, codex, opencode (grok/pi not).
+- Profile names, model choices, and route policy are operator-owned; Serenade must not invent a global default harness.
+- Harnesses observed installed during live verification: claude, codex, opencode (grok/pi not).
+- Serenade's **Supervisor chat is separate from worker routing** and currently launches `opencode` directly. Worker profiles/routes may use other Hand-supported harnesses.
 
 ## 8. Events (`hand watch --until-event`)
 
@@ -153,7 +155,7 @@ help[N]:
 | Structured logs | **partial** | `state/<id>.status` plain lines; cursor = line offset |
 | Full-text search | **yes** | `search --json` (unused by UI yet) |
 
-## 11. Windows runtime requirements (verified live)
+## 10. Windows runtime requirements (verified live)
 
 1. **herdr panes must run a POSIX shell.** hand types POSIX-syntax worker launch
    commands (`VAR=val cmd && …`) into herdr panes and fails closed on cmd.exe /
@@ -170,7 +172,7 @@ help[N]:
 4. **Claude Code harness shows a trust dialog** ("Allow external CLAUDE.md file
    imports?") when the operator's global config imports files. hand refuses to
    answer unknown dialogs; the operator must answer it once per project in the
-   herdr pane, or use a different harness (e.g. `hand config set harness opencode`).
+   herdr pane, or route that work through another already-configured Hand profile.
 5. A spawn that fails mid-launch (harness never confirmed) leaves the task
    `open/provisioning`. `hand reconcile <id>` unwinds it cleanly ("unwind-failed-
    provisioning"), after which `hand reopen <id>` retries. There is no
@@ -180,7 +182,7 @@ Live verification: scout `survey-kanvas` on project `Kanvas-Kosong-Web`
 (local-only mode), harness opencode, treehouse v2.3.0, herdr 0.8.2 — attempt
 reached `running` with `agent_state: working`.
 
-## 12. UI status derivation (hand → board columns)
+## 11. UI status derivation (hand → board columns)
 
 hand has no board states; Serenade derives them:
 
