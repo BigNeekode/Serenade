@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src-tauri/icons/128x128@2x.png" alt="Serenade icon" width="128" />
+  <img src="assets/serenade.png" alt="Serenade logo" width="160" />
 </p>
 
 <h1 align="center">Serenade</h1>
