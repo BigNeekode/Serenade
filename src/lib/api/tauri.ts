@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { HandGateway } from "@/lib/hand/gateway";
 import type {
   AgentRun,
   AppConfig,
@@ -21,14 +22,17 @@ import type { SerenadeApi } from "./interface";
 /**
  * Tauri-backed implementation of SerenadeApi.
  *
- * Command names mirror architecture.md §7. The Rust backend is not wired up yet
- * (no Rust toolchain / `hand` binary in the current environment — see
- * docs/hand-integration-notes.md); this adapter is the drop-in point when it is.
+ * React features depend on Serenade domain contracts, while Hand contract
+ * negotiation is centralized in HandGateway. The current backend remains the
+ * verified 0.6/0.7 adapter; Hand 0.8+ stays read/diagnostics-only until its
+ * released projection/action contracts are integrated.
  *
  * Safety: every command receives typed, validated arguments. There is no
  * generic shell passthrough (architecture.md §11).
  */
 export class TauriSerenadeApi implements SerenadeApi {
+  private readonly hand = new HandGateway();
+
   async getConfig(): Promise<AppConfig> {
     return invoke("config_get");
   }
@@ -36,7 +40,7 @@ export class TauriSerenadeApi implements SerenadeApi {
     return invoke("config_update", { input });
   }
   async validateEnvironment(): Promise<EnvironmentStatus> {
-    return invoke("environment_validate");
+    return this.hand.environment();
   }
   async getDiagnostics(): Promise<Diagnostics> {
     return invoke("diagnostics_get");
@@ -82,22 +86,28 @@ export class TauriSerenadeApi implements SerenadeApi {
   }
 
   async createTask(input: CreateTaskInput): Promise<Task> {
+    await this.hand.assertMutationCompatible();
     return invoke("task_create", { input });
   }
   async sendTaskMessage(taskId: string, message: string): Promise<void> {
+    await this.hand.assertMutationCompatible();
     return invoke("task_send_message", { taskId, message });
   }
   async retryTask(taskId: string): Promise<void> {
+    await this.hand.assertMutationCompatible();
     return invoke("task_retry", { taskId });
   }
   async stopTask(taskId: string): Promise<void> {
+    await this.hand.assertMutationCompatible();
     return invoke("task_stop", { taskId });
   }
   async promoteTask(taskId: string): Promise<Task> {
+    await this.hand.assertMutationCompatible();
     return invoke("task_promote", { taskId });
   }
 
   async cleanupWorktree(worktreeId: string): Promise<void> {
+    await this.hand.assertMutationCompatible();
     return invoke("worktree_cleanup", { worktreeId });
   }
   async openWorktree(
