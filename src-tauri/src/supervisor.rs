@@ -1,10 +1,10 @@
 //! Supervisor chat — hosts a headless AI supervisor runtime for the fleet.
 //!
 //! Serenade is presentation + interaction, not a competing source of Fleet
-//! truth. A provider conversation is therefore only ephemeral UX/runtime state:
-//! every reasoning turn is prefixed with fresh Hand-owned context. On Hand 0.7+
-//! that is `hand orient`; Hand 0.6 falls back to its older per-turn
-//! `hand session start` context contract.
+//! truth. A provider conversation is therefore only ephemeral UX/runtime state.
+//! Serenade performs a best-effort read-only preflight before each turn, while
+//! the actual Supervisor Harness is instructed to follow Hand's own runtime
+//! contract (`session start` once for a new runtime, `orient` every turn).
 
 use crate::error::{Code, SerenadeError};
 use serde::Serialize;
@@ -66,10 +66,11 @@ fn truncate(s: String, budget: usize) -> String {
 
 /// Best-effort read of one Hand context command in the supervisor cwd.
 ///
-/// This is deliberately read-only. Serenade does not perform supervisor-origin
-/// workflow mutations here; exact GUI actions continue through typed Tauri
-/// commands. The direct `hand` executable is a transition shim until the Rust
-/// HandGateway owns the configured binary for all supervisor reads as well.
+/// This is deliberately read-only and is only a preflight/context hint. It does
+/// not replace the actual Supervisor Harness's obligation to bootstrap/orient
+/// itself. Exact GUI actions continue through typed Tauri commands. The direct
+/// `hand` executable is a transition shim until the Rust HandGateway owns the
+/// configured binary for all supervisor reads as well.
 fn read_hand_context(cwd: &PathBuf, args: &[&str]) -> Option<String> {
     let mut cmd = Command::new("hand");
     cmd.args(args)
@@ -91,7 +92,7 @@ fn read_hand_context(cwd: &PathBuf, args: &[&str]) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// Refresh current Hand-owned supervisor context for every reasoning turn.
+/// Refresh current Hand-owned context as a presentation-side preflight.
 ///
 /// 0.7+ owns the `session start once -> orient every turn` split. Hand 0.6 did
 /// not yet expose `orient`, so its older `session start` command remains the
@@ -130,13 +131,17 @@ pub fn build_first_turn_prompt(
 
 {scope}
 
-=== supervisor runtime bootstrap (first turn only) ===
+=== Serenade-collected bootstrap hint ===
 {session_doc}
 
-=== Serenade interaction contract ===
+The block above was collected by Serenade before your provider runtime started. It is a compatibility hint, not your runtime identity and not workflow authority.
+
+=== Supervisor Harness runtime contract ===
+- You are the actual Supervisor Harness runtime for this turn.
+- On the first turn of a new actual provider runtime/session, run `hand session start` once yourself before reasoning. Do not persist its runtime/session identity as Fleet workflow truth.
+- Before reasoning or acting on every turn, run `hand orient` yourself and use its fresh bounded SupervisorOrientation. If `hand orient` is unavailable because this is legacy Hand 0.6, run `hand session start` as the legacy per-turn context refresh instead.
+- Any Serenade-injected preflight context is supplemental; your own runtime orientation is the required current observation before reasoning/action.
 - Serenade presentation/chat history is not workflow truth.
-- A fresh Hand-owned context is injected immediately before every reasoning turn. Treat that fresh context as authoritative when it conflicts with remembered conversation state.
-- On current Hand this context comes from `hand orient`; legacy Hand 0.6 falls back to `hand session start`.
 - Do not infer completion/currentness from conversational memory, provider session identity, or a worker saying `done`.
 - Workflow-changing actions remain operator-approved through typed Serenade actions during this transition.
 - To propose work, emit a fenced code block labeled `tasks` containing a JSON array, one object per task:
@@ -153,26 +158,29 @@ Operator: {message}"#,
 }
 
 /// Run `opencode run --format json [--session <id>] <message>` in the selected
-/// fleet/project scope. Every turn receives fresh Hand-owned orientation before
-/// the operator message reaches the provider runtime.
+/// fleet/project scope. Every turn receives a best-effort fresh Hand preflight
+/// and an explicit instruction to orient inside the actual provider runtime.
 pub fn run_supervisor_turn(
     message: &str,
     session_id: Option<&str>,
     cwd: &PathBuf,
 ) -> Result<(Option<String>, String), SerenadeError> {
+    let runtime_instruction =
+        "Before reasoning or acting on this turn, run `hand orient` yourself. If `hand orient` is unavailable on legacy Hand 0.6, run `hand session start` instead. Treat the result as authoritative over remembered chat state.";
+
     let turn_prompt = match fresh_hand_context(cwd) {
         Some((source, context)) => format!(
-            "=== FRESH HAND CONTEXT — AUTHORITATIVE FOR THIS TURN ===\nsource: {source}\n\
-             Do not substitute remembered chat state for these current facts.\n\n{}\n\n\
+            "=== SERENADE READ-ONLY HAND PREFLIGHT ===\nsource: {source}\n\
+             This is supplemental context, not a substitute for Supervisor Harness orientation.\n\n{}\n\n\
+             === SUPERVISOR RUNTIME REQUIREMENT ===\n{runtime_instruction}\n\n\
              === SERENADE TURN ===\n{}",
             truncate(context, CONTEXT_BUDGET),
             message,
         ),
         None => format!(
-            "=== HAND CONTEXT REFRESH REQUIRED ===\n\
-             Serenade could not refresh Hand directly from PATH. Before reasoning, run `hand orient`; \
-             if this is legacy Hand 0.6 where `orient` is unavailable, run `hand session start` instead. \
-             Treat that result as authoritative over remembered chat state.\n\n=== SERENADE TURN ===\n{message}"
+            "=== SUPERVISOR RUNTIME REQUIREMENT ===\n{runtime_instruction}\n\n\
+             Serenade could not refresh Hand directly from PATH, so do not rely on presentation-side context.\n\n\
+             === SERENADE TURN ===\n{message}"
         ),
     };
 
@@ -300,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn first_turn_prompt_contains_protocol_without_private_snapshot() {
+    fn first_turn_prompt_contains_runtime_contract_without_private_snapshot() {
         let prompt = build_first_turn_prompt(
             "SESSION",
             "PRIVATE_FLEET_JSON",
@@ -311,6 +319,8 @@ mod tests {
         assert!(prompt.contains("```tasks"));
         assert!(prompt.contains("SESSION"));
         assert!(prompt.contains("do stuff"));
+        assert!(prompt.contains("run `hand session start` once yourself"));
+        assert!(prompt.contains("run `hand orient` yourself"));
         assert!(prompt.contains("presentation/chat history is not workflow truth"));
         assert!(!prompt.contains("PRIVATE_FLEET_JSON"));
         assert!(!prompt.contains("PRIVATE_PROJECT_JSON"));
