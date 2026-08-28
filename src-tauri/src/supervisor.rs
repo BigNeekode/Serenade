@@ -147,9 +147,11 @@ pub fn run_supervisor_turn(
             return Err(SerenadeError::new(
                 Code::HandNotFound,
                 "opencode not found",
-                "The supervisor chat runs through the opencode harness, but `opencode` is not on PATH.",
+                "Serenade Supervisor chat currently runs through OpenCode, but `opencode` is not on PATH.",
             )
-            .with_action("Install opencode, or set the fleet harness to opencode."));
+            .with_action(
+                "Install OpenCode and ensure `opencode` is on PATH. Worker routes may still use other Hand-supported harnesses.",
+            ));
         }
         Err(e) => {
             return Err(SerenadeError::new(
@@ -258,7 +260,7 @@ mod tests {
     #[test]
     fn project_scoped_prompt_pins_project() {
         let prompt = build_first_turn_prompt("S", "{}", "[]", "go", Some("Kanvas-Kosong-Web"));
-        assert!(prompt.contains("Kanvas-Kosong-Web"));
-        assert!(prompt.contains("read its code directly"));
+        assert!(prompt.contains("project **Kanvas-Kosong-Web** specifically"));
+        assert!(prompt.contains("set every proposed task's `project` to \"Kanvas-Kosong-Web\""));
     }
 }
