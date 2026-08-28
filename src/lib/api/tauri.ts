@@ -107,10 +107,10 @@ export class TauriSerenadeApi implements SerenadeApi {
     return invoke(`worktree_open_${target}`, { worktreeId });
   }
 
-  async supervisorChat(message: string): Promise<SupervisorReply> {
-    return invoke("supervisor_chat", { message });
+  async supervisorChat(message: string, projectId?: string): Promise<SupervisorReply> {
+    return invoke("supervisor_chat", { message, projectId: projectId ?? null });
   }
-  async supervisorReset(): Promise<void> {
-    return invoke("supervisor_reset");
+  async supervisorReset(projectId?: string): Promise<void> {
+    return invoke("supervisor_reset", { projectId: projectId ?? null });
   }
 }

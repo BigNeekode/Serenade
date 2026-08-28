@@ -25,7 +25,7 @@ struct AppCtx {
     config: ConfigStore,
     fleet_cache: Mutex<Option<(Instant, Arc<FleetJson>)>>,
     git_cache: Mutex<HashMap<String, (Instant, git::GitInfo)>>,
-    supervisor_session: Mutex<Option<String>>,
+    supervisor_sessions: Mutex<HashMap<String, String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -967,12 +967,17 @@ async fn worktree_open_terminal(worktree_id: String) -> Result<(), SerenadeError
 // Supervisor chat
 // ---------------------------------------------------------------------------
 
-/// Chat with the headless fleet supervisor. The first turn injects the
-/// `hand session start` contract plus live fleet state; later turns continue
-/// the opencode session (which also reads the fleet's AGENTS.md from cwd).
+/// Chat with the headless fleet supervisor. Sessions are scoped: one for the
+/// whole fleet (`project_id: None`) and one per registered project. A
+/// project-scoped supervisor runs with cwd at the project clone, so the agent
+/// can read that repository; the first turn injects the `hand session start`
+/// contract plus live state either way.
 #[tauri::command]
-async fn supervisor_chat(message: String) -> Result<supervisor::SupervisorReply, SerenadeError> {
-    let (config, runner, files) = setup()?;
+async fn supervisor_chat(
+    message: String,
+    project_id: Option<String>,
+) -> Result<supervisor::SupervisorReply, SerenadeError> {
+    let (_config, runner, files) = setup()?;
     let ctx = CTX.get().expect("ctx");
     let msg = message.trim();
     if msg.is_empty() {
@@ -983,35 +988,72 @@ async fn supervisor_chat(message: String) -> Result<supervisor::SupervisorReply,
         ));
     }
 
-    let session_id = ctx.supervisor_session.lock().expect("supervisor session").clone();
+    // Scope: fleet-wide chat runs in the fleet home; project chat runs in the
+    // project clone so the agent sees the codebase it is planning work for.
+    let scope = project_id.clone().unwrap_or_default();
+    let cwd = if scope.is_empty() {
+        files.home.clone()
+    } else {
+        if !valid_task_id(&scope) {
+            return Err(SerenadeError::new(
+                Code::InvalidPath,
+                "Invalid project name",
+                format!("{scope:?} is not a valid project name."),
+            ));
+        }
+        let clone = files.home.join("projects").join(&scope);
+        if !clone.is_dir() {
+            return Err(SerenadeError::new(
+                Code::ProjectNotFound,
+                "Project clone not found",
+                format!("No clone for project {scope} under {}.", files.home.join("projects").display()),
+            )
+            .with_action("Register the project with `hand project add` first."));
+        }
+        clone
+    };
+
+    let session_id = ctx
+        .supervisor_sessions
+        .lock()
+        .expect("supervisor sessions")
+        .get(&scope)
+        .cloned();
     let prompt = if session_id.is_none() {
-        // First turn: hand's supervisor contract + live fleet snapshot.
         let session_doc = runner.expect(&["session", "start"], 20)?;
         let fleet = fleet_status_cached(&runner)?;
         let fleet_json = serde_json::to_string(&*fleet).unwrap_or_else(|_| "{}".into());
         let projects_json = runner.expect(&["project", "list", "--json"], 15)?;
-        supervisor::build_first_turn_prompt(&session_doc, &fleet_json, &projects_json, msg)
+        supervisor::build_first_turn_prompt(
+            &session_doc,
+            &fleet_json,
+            &projects_json,
+            msg,
+            project_id.as_deref(),
+        )
     } else {
         msg.to_string()
     };
 
-    let (session, text) = supervisor::run_supervisor_turn(
-        &prompt,
-        session_id.as_deref(),
-        &files.home,
-    )?;
+    let (session, text) = supervisor::run_supervisor_turn(&prompt, session_id.as_deref(), &cwd)?;
     if let Some(id) = session {
-        *ctx.supervisor_session.lock().expect("supervisor session") = Some(id);
+        ctx.supervisor_sessions
+            .lock()
+            .expect("supervisor sessions")
+            .insert(scope, id);
     }
-    let _ = config;
     Ok(supervisor::SupervisorReply { text })
 }
 
-/// Forget the supervisor session; the next chat message starts fresh.
+/// Forget a supervisor session; the next chat message starts fresh.
 #[tauri::command]
-async fn supervisor_reset() -> Result<(), SerenadeError> {
+async fn supervisor_reset(project_id: Option<String>) -> Result<(), SerenadeError> {
     let ctx = CTX.get().expect("ctx");
-    *ctx.supervisor_session.lock().expect("supervisor session") = None;
+    let scope = project_id.unwrap_or_default();
+    ctx.supervisor_sessions
+        .lock()
+        .expect("supervisor sessions")
+        .remove(&scope);
     Ok(())
 }
 
@@ -1029,7 +1071,7 @@ pub fn run() {
                 config: ConfigStore::new(data_dir),
                 fleet_cache: Mutex::new(None),
                 git_cache: Mutex::new(HashMap::new()),
-                supervisor_session: Mutex::new(None),
+                supervisor_sessions: Mutex::new(HashMap::new()),
             });
             if cfg!(debug_assertions) {
                 app.handle().plugin(

@@ -54,6 +54,6 @@ export interface SerenadeApi {
   openWorktree(worktreeId: string, target: "editor" | "folder" | "terminal"): Promise<void>;
 
   // Supervisor chat
-  supervisorChat(message: string): Promise<SupervisorReply>;
-  supervisorReset(): Promise<void>;
+  supervisorChat(message: string, projectId?: string): Promise<SupervisorReply>;
+  supervisorReset(projectId?: string): Promise<void>;
 }

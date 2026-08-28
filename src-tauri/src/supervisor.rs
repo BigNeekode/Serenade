@@ -67,14 +67,29 @@ fn truncate(s: String, budget: usize) -> String {
 }
 
 /// The first-turn prompt: supervisor contract + live fleet state + protocol.
+/// When `project` is set, the supervisor is scoped to that project (and runs
+/// with cwd at its clone, so it can read the code).
 pub fn build_first_turn_prompt(
     session_doc: &str,
     fleet_json: &str,
     projects_json: &str,
     message: &str,
+    project: Option<&str>,
 ) -> String {
+    let scope = match project {
+        Some(name) => format!(
+            "You are the supervisor for project **{name}** specifically. You are running inside \
+             that project's clone, so you can read its code directly. Propose work only for \
+             {name}; set every proposed task's `project` to \"{name}\"."
+        ),
+        None => "You are the supervisor for the whole fleet; propose work for any registered \
+                 project as appropriate."
+            .to_string(),
+    };
     format!(
         r#"You are the fleet supervisor for this Secondhand (`hand`) fleet, chatting with the operator through the Serenade desktop GUI.
+
+{scope}
 
 === hand supervisor session context ===
 {session_doc}
@@ -145,14 +160,31 @@ pub fn run_supervisor_turn(
         }
     };
 
+    // Drain both pipes concurrently while waiting: a supervisor turn can emit
+    // megabytes of JSON events (tool calls embed file contents). If nobody
+    // reads while the child runs, the OS pipe buffer fills, the child blocks
+    // on write, and the turn deadlocks into the timeout.
+    let mut stdout_pipe = child.stdout.take().expect("stdout piped");
+    let mut stderr_pipe = child.stderr.take().expect("stderr piped");
+    let stdout_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut stdout_pipe, &mut buf);
+        buf
+    });
+    let stderr_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut stderr_pipe, &mut buf);
+        buf
+    });
+
     match child.wait_timeout(Duration::from_secs(SUPERVISOR_TIMEOUT_SECS)) {
-        Ok(Some(_)) => {
-            let output = child.wait_with_output().map_err(|e| {
-                SerenadeError::new(Code::CommandFailed, "Supervisor output unreadable", e.to_string())
-            })?;
-            let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-            if !output.status.success() && stdout.trim().is_empty() {
-                let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        Ok(Some(status)) => {
+            let stdout_bytes = stdout_thread.join().unwrap_or_default();
+            let stderr_bytes = stderr_thread.join().unwrap_or_default();
+            let _ = child.wait();
+            let stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
+            if !status.success() && stdout.trim().is_empty() {
+                let stderr = String::from_utf8_lossy(&stderr_bytes).into_owned();
                 return Err(SerenadeError::new(
                     Code::CommandFailed,
                     "Supervisor agent failed",
@@ -165,7 +197,11 @@ pub fn run_supervisor_turn(
                     Code::ParseFailed,
                     "Supervisor returned no reply",
                     "The headless agent finished without text output.",
-                ));
+                )
+                .with_detail(format!(
+                    "stdout (first 2000 chars): {}",
+                    truncate(stdout, 2000)
+                )));
             }
             Ok((session, text))
         }
@@ -213,9 +249,16 @@ mod tests {
 
     #[test]
     fn first_turn_prompt_contains_protocol() {
-        let prompt = build_first_turn_prompt("SESSION", "{\"task_count\":0}", "[]", "do stuff");
+        let prompt = build_first_turn_prompt("SESSION", "{\"task_count\":0}", "[]", "do stuff", None);
         assert!(prompt.contains("```tasks"));
         assert!(prompt.contains("SESSION"));
         assert!(prompt.contains("do stuff"));
+    }
+
+    #[test]
+    fn project_scoped_prompt_pins_project() {
+        let prompt = build_first_turn_prompt("S", "{}", "[]", "go", Some("Kanvas-Kosong-Web"));
+        assert!(prompt.contains("Kanvas-Kosong-Web"));
+        assert!(prompt.contains("read its code directly"));
     }
 }

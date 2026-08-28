@@ -7,6 +7,12 @@ import {
   type ReactNode,
 } from "react";
 
+export interface SupervisorChatState {
+  messages: { id: number; role: "operator" | "supervisor"; text: string }[];
+  createdTitles: string[];
+  counter: number;
+}
+
 interface UiState {
   selectedProjectId: string | null;
   setSelectedProjectId: (id: string | null) => void;
@@ -20,6 +26,9 @@ interface UiState {
   selectAgent: (id: string | null) => void;
   paletteOpen: boolean;
   setPaletteOpen: (open: boolean) => void;
+  supervisorChats: Record<string, SupervisorChatState>;
+  getSupervisorChat: (scope: string) => SupervisorChatState;
+  setSupervisorChat: (scope: string, state: SupervisorChatState) => void;
 }
 
 const UiContext = createContext<UiState | null>(null);
@@ -52,6 +61,7 @@ export function UiStoreProvider({ children }: { children: ReactNode }) {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [supervisorChats, setSupervisorChats] = useState<Record<string, SupervisorChatState>>({});
 
   useEffect(() => persist("serenade.ui.selectedProjectId", selectedProjectId), [selectedProjectId]);
   useEffect(() => persist("serenade.ui.sidebarCollapsed", sidebarCollapsed), [sidebarCollapsed]);
@@ -60,6 +70,15 @@ export function UiStoreProvider({ children }: { children: ReactNode }) {
   const setSelectedProjectId = useCallback((id: string | null) => setSelectedProjectIdState(id), []);
   const toggleSidebar = useCallback(() => setSidebarCollapsed((v) => !v), []);
   const setPanelWidth = useCallback((w: number) => setPanelWidthState(Math.min(640, Math.max(280, w))), []);
+
+  const getSupervisorChat = useCallback(
+    (scope: string): SupervisorChatState =>
+      supervisorChats[scope] ?? { messages: [], createdTitles: [], counter: 0 },
+    [supervisorChats],
+  );
+  const setSupervisorChat = useCallback((scope: string, state: SupervisorChatState) => {
+    setSupervisorChats((chats) => ({ ...chats, [scope]: state }));
+  }, []);
 
   const selectTask = useCallback((id: string | null) => {
     setSelectedTaskId(id);
@@ -85,6 +104,9 @@ export function UiStoreProvider({ children }: { children: ReactNode }) {
         selectAgent,
         paletteOpen,
         setPaletteOpen,
+        supervisorChats,
+        getSupervisorChat,
+        setSupervisorChat,
       }}
     >
       {children}

@@ -1,23 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
+import { useMutation } from "@tanstack/react-query";
 import { BrainCircuit, Check, Loader2, RotateCcw, Send, Sparkles, User } from "lucide-react";
 import { PageContainer } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/button";
 import { MarkdownView } from "@/components/common/MarkdownView";
+import { Select } from "@/components/ui/input";
 import { ClassBadge, Mono, TypeBadge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { useApi } from "@/lib/api";
-import { useMutation } from "@tanstack/react-query";
 import { useCreateTask } from "@/hooks/use-tasks";
 import { useProjects } from "@/hooks/use-projects";
+import { useUiStore } from "@/state/ui-store";
 import { toAppError } from "@/types/domain";
 import type { ExecutionClass, TaskType } from "@/types/domain";
-
-interface ChatMessage {
-  id: number;
-  role: "operator" | "supervisor";
-  text: string;
-}
 
 interface TaskProposal {
   title: string;
@@ -104,7 +100,7 @@ function ProposalCard({
             <Check size={12} /> spawned
           </span>
         ) : (
-          <Button variant="primary" size="xs" onClick={onCreate} loading={busy} disabled={created}>
+          <Button variant="primary" size="xs" onClick={onCreate} loading={busy}>
             <Sparkles size={11} />
             Approve & spawn
           </Button>
@@ -114,22 +110,39 @@ function ProposalCard({
   );
 }
 
+/** Scope key for chat persistence: "fleet" or a project name. */
+const FLEET_SCOPE = "fleet";
+
 export function SupervisorPage() {
   const api = useApi();
   const toast = useToast();
   const { data: projects } = useProjects();
   const createTask = useCreateTask();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const { getSupervisorChat, setSupervisorChat, selectedProjectId } = useUiStore();
+  const [scope, setScope] = useState<string>(() =>
+    selectedProjectId ?? FLEET_SCOPE,
+  );
   const [input, setInput] = useState("");
-  const [createdTitles, setCreatedTitles] = useState<Set<string>>(new Set());
   const [busyTitles, setBusyTitles] = useState<Set<string>>(new Set());
-  const counter = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const chat = useMutation({
-    mutationFn: (message: string) => api.supervisorChat(message),
+  // Chat state lives in the global UI store, so history survives navigating
+  // away and back — and each scope keeps its own conversation.
+  const chat = getSupervisorChat(scope);
+
+  const projectId = scope === FLEET_SCOPE ? undefined : scope;
+
+  const sendMutation = useMutation({
+    mutationFn: (message: string) => api.supervisorChat(message, projectId),
     onSuccess: (reply) => {
-      setMessages((list) => [...list, { id: ++counter.current, role: "supervisor", text: reply.text }]);
+      setSupervisorChat(scope, {
+        ...chat,
+        messages: [
+          ...chat.messages,
+          { id: chat.counter + 1, role: "supervisor", text: reply.text },
+        ],
+        counter: chat.counter + 1,
+      });
     },
     onError: (err) => {
       const appErr = toAppError(err);
@@ -145,26 +158,30 @@ export function SupervisorPage() {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages.length, chat.isPending]);
+  }, [chat.messages.length, sendMutation.isPending]);
 
   const proposals = useMemo(() => {
-    const last = [...messages].reverse().find((m) => m.role === "supervisor");
+    const last = [...chat.messages].reverse().find((m) => m.role === "supervisor");
     return last ? parseProposals(last.text) : [];
-  }, [messages]);
+  }, [chat.messages]);
+
+  const createdSet = useMemo(() => new Set(chat.createdTitles), [chat.createdTitles]);
 
   const send = () => {
     const text = input.trim();
-    if (!text || chat.isPending) return;
+    if (!text || sendMutation.isPending) return;
     setInput("");
-    setMessages((list) => [...list, { id: ++counter.current, role: "operator", text }]);
-    setCreatedTitles(new Set());
-    chat.mutate(text);
+    setSupervisorChat(scope, {
+      ...chat,
+      messages: [...chat.messages, { id: chat.counter + 1, role: "operator", text }],
+      counter: chat.counter + 1,
+    });
+    sendMutation.mutate(text);
   };
 
   const reset = async () => {
-    await api.supervisorReset();
-    setMessages([]);
-    setCreatedTitles(new Set());
+    await api.supervisorReset(projectId);
+    setSupervisorChat(scope, { messages: [], createdTitles: [], counter: 0 });
     toast.showToast({ variant: "info", title: "Supervisor session reset" });
   };
 
@@ -179,7 +196,10 @@ export function SupervisorPage() {
         executionClass: proposal.executionClass,
         tags: proposal.tags,
       });
-      setCreatedTitles((s) => new Set(s).add(proposal.title));
+      setSupervisorChat(scope, {
+        ...chat,
+        createdTitles: [...chat.createdTitles, proposal.title],
+      });
       toast.showToast({
         variant: "success",
         title: `Worker dispatched: ${task.id}`,
@@ -201,7 +221,8 @@ export function SupervisorPage() {
     }
   };
 
-  const pendingCount = proposals.filter((p) => !createdTitles.has(p.title)).length;
+  const pendingCount = proposals.filter((p) => !createdSet.has(p.title)).length;
+  const scopeProject = projects?.find((p) => p.id === scope);
 
   return (
     <PageContainer
@@ -211,34 +232,59 @@ export function SupervisorPage() {
           Supervisor
         </span>
       }
-      subtitle="Chat with the fleet's supervising agent — it plans work, you approve the dispatches"
+      subtitle={
+        scope === FLEET_SCOPE
+          ? "Chat with the fleet's supervising agent — it plans work, you approve the dispatches"
+          : `Project supervisor for ${scope} — runs inside the project clone, proposes work for this repo`
+      }
       actions={
-        messages.length > 0 && (
-          <Button variant="ghost" onClick={reset} disabled={chat.isPending}>
-            <RotateCcw size={13} />
-            New session
-          </Button>
-        )
+        <div className="flex items-center gap-2">
+          <Select
+            value={scope}
+            onChange={(e) => setScope(e.target.value)}
+            className="h-8 w-52 text-xs"
+            aria-label="Supervisor scope"
+          >
+            <option value={FLEET_SCOPE}>Whole fleet</option>
+            {projects?.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+          {chat.messages.length > 0 && (
+            <Button variant="ghost" onClick={reset} disabled={sendMutation.isPending}>
+              <RotateCcw size={13} />
+              New session
+            </Button>
+          )}
+        </div>
       }
     >
       <div className="flex min-h-[60vh] flex-col gap-4 rounded-xl border border-line bg-panel">
         <div ref={scrollRef} className="max-h-[52vh] min-h-48 flex-1 overflow-y-auto p-4">
-          {messages.length === 0 && !chat.isPending && (
+          {chat.messages.length === 0 && !sendMutation.isPending && (
             <div className="flex h-full flex-col items-center justify-center gap-2 py-8 text-center">
               <BrainCircuit size={22} className="text-fg-subtle" />
-              <p className="text-xs font-medium text-fg-muted">Ask the supervisor to plan work</p>
-              <p className="max-w-md text-[11px] leading-relaxed text-fg-subtle">
-                e.g. “Look at the fleet and propose tasks to improve the site's accessibility.”
-                The supervisor sees your fleet's live state and hand's supervision contract; the
-                tasks it proposes appear as approval cards below.
+              <p className="text-xs font-medium text-fg-muted">
+                {scope === FLEET_SCOPE
+                  ? "Ask the supervisor to plan work for the fleet"
+                  : `Ask the ${scope} supervisor to plan work`}
               </p>
-              {projects && projects.length === 0 && (
-                <p className="text-[11px] text-warning">Register a project first — the supervisor dispatches into projects.</p>
+              <p className="max-w-md text-[11px] leading-relaxed text-fg-subtle">
+                {scope === FLEET_SCOPE
+                  ? "The supervisor sees your fleet's live state and hand's supervision contract; proposed tasks appear as approval cards below."
+                  : "This supervisor runs inside the project clone and can read the codebase. It proposes work for this project only; proposals appear as approval cards below."}
+              </p>
+              {scope !== FLEET_SCOPE && !scopeProject && (
+                <p className="text-[11px] text-warning">
+                  Project {scope} is not registered — pick another scope or register it first.
+                </p>
               )}
             </div>
           )}
           <div className="space-y-4">
-            {messages.map((message) => (
+            {chat.messages.map((message) => (
               <div key={message.id} className="flex gap-3">
                 <span
                   className={clsx(
@@ -258,7 +304,7 @@ export function SupervisorPage() {
                 </div>
               </div>
             ))}
-            {chat.isPending && (
+            {sendMutation.isPending && (
               <div className="flex gap-3">
                 <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-accent/40 bg-accent-soft text-accent">
                   <BrainCircuit size={12} />
@@ -284,7 +330,7 @@ export function SupervisorPage() {
                   size="xs"
                   onClick={() => {
                     for (const proposal of proposals) {
-                      if (!createdTitles.has(proposal.title)) void spawn(proposal);
+                      if (!createdSet.has(proposal.title)) void spawn(proposal);
                     }
                   }}
                 >
@@ -297,7 +343,7 @@ export function SupervisorPage() {
                 <ProposalCard
                   key={`${proposal.project}-${proposal.title}`}
                   proposal={proposal}
-                  created={createdTitles.has(proposal.title)}
+                  created={createdSet.has(proposal.title)}
                   busy={busyTitles.has(proposal.title)}
                   onCreate={() => void spawn(proposal)}
                 />
@@ -317,10 +363,20 @@ export function SupervisorPage() {
                 send();
               }
             }}
-            placeholder="Tell the supervisor what you want done…"
+            placeholder={
+              scope === FLEET_SCOPE
+                ? "Tell the supervisor what you want done…"
+                : `Tell the ${scope} supervisor what you want done…`
+            }
             className="w-full resize-y rounded-lg border border-line bg-surface px-3 py-2 text-xs text-fg placeholder:text-fg-subtle focus:border-accent/70 focus:outline-none focus:ring-1 focus:ring-accent/40"
           />
-          <Button variant="primary" size="md" onClick={send} loading={chat.isPending} disabled={!input.trim()}>
+          <Button
+            variant="primary"
+            size="md"
+            onClick={send}
+            loading={sendMutation.isPending}
+            disabled={!input.trim()}
+          >
             <Send size={13} />
             Send
           </Button>
