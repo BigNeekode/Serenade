@@ -1,13 +1,10 @@
-//! Supervisor chat — hosts a headless AI supervisor session for the fleet.
+//! Supervisor chat — hosts a headless AI supervisor runtime for the fleet.
 //!
-//! hand's design (the fleet home's AGENTS.md + `hand session start`) puts an AI
-//! agent in the supervisor role: it plans work, writes briefs, and dispatches
-//! workers. Serenade hosts that supervisor as a chat: the agent runs headless
-//! in the fleet home (so it reads the fleet's AGENTS.md), receives the same
-//! session context `hand session start` produces plus live fleet state, and
-//! proposes tasks as approval cards. The operator approves; Serenade writes
-//! the brief and runs `hand spawn` (human-gated dispatch, matching hand's
-//! "explicit authorization" invariants).
+//! Serenade is presentation + interaction, not a competing source of Fleet
+//! truth. A provider conversation is therefore only ephemeral UX/runtime state:
+//! every reasoning turn is prefixed with fresh Hand-owned context. On Hand 0.7+
+//! that is `hand orient`; Hand 0.6 falls back to its older per-turn
+//! `hand session start` context contract.
 
 use crate::error::{Code, SerenadeError};
 use serde::Serialize;
@@ -20,7 +17,7 @@ use wait_timeout::ChildExt;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const SUPERVISOR_TIMEOUT_SECS: u64 = 240;
-/// Cap fleet context so a large fleet cannot blow up the prompt.
+/// Cap injected Hand context so a large fleet cannot blow up the prompt.
 const CONTEXT_BUDGET: usize = 12_000;
 
 #[derive(Debug, Clone, Serialize)]
@@ -29,8 +26,9 @@ pub struct SupervisorReply {
     pub text: String,
 }
 
-/// Parse `opencode run --format json` event stream: keep the session id and
-/// concatenate assistant text parts. Tolerant of unknown event types.
+/// Parse `opencode run --format json` event stream: keep the provider session
+/// id and concatenate assistant text parts. The session id is runtime mechanics
+/// only; it is never canonical Fleet workflow identity.
 pub fn parse_events(stdout: &str) -> (Option<String>, String) {
     let mut session = None;
     let mut text = String::new();
@@ -66,20 +64,61 @@ fn truncate(s: String, budget: usize) -> String {
     }
 }
 
-/// The first-turn prompt: supervisor contract + live fleet state + protocol.
-/// When `project` is set, the supervisor is scoped to that project (and runs
-/// with cwd at its clone, so it can read the code).
+/// Best-effort read of one Hand context command in the supervisor cwd.
+///
+/// This is deliberately read-only. Serenade does not perform supervisor-origin
+/// workflow mutations here; exact GUI actions continue through typed Tauri
+/// commands. The direct `hand` executable is a transition shim until the Rust
+/// HandGateway owns the configured binary for all supervisor reads as well.
+fn read_hand_context(cwd: &PathBuf, args: &[&str]) -> Option<String> {
+    let mut cmd = Command::new("hand");
+    cmd.args(args)
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+/// Refresh current Hand-owned supervisor context for every reasoning turn.
+///
+/// 0.7+ owns the `session start once -> orient every turn` split. Hand 0.6 did
+/// not yet expose `orient`, so its older `session start` command remains the
+/// compatibility fallback and is intentionally re-read every turn.
+fn fresh_hand_context(cwd: &PathBuf) -> Option<(&'static str, String)> {
+    if let Some(orientation) = read_hand_context(cwd, &["orient"]) {
+        return Some(("hand orient", orientation));
+    }
+    read_hand_context(cwd, &["session", "start"])
+        .map(|context| ("hand session start (legacy fallback)", context))
+}
+
+/// First-turn conversation framing. `fleet_json` and `projects_json` are kept in
+/// the signature temporarily so the 0.6 Tauri caller can migrate independently,
+/// but they are intentionally ignored: manually assembled Serenade snapshots
+/// must not become private competing Supervisor truth.
 pub fn build_first_turn_prompt(
     session_doc: &str,
-    fleet_json: &str,
-    projects_json: &str,
+    _fleet_json: &str,
+    _projects_json: &str,
     message: &str,
     project: Option<&str>,
 ) -> String {
     let scope = match project {
         Some(name) => format!(
             "You are the supervisor for project **{name}** specifically. You are running inside \
-             that project's clone, so you can read its code directly. Propose work only for \
+             that project's managed clone, so you can inspect its code. Propose work only for \
              {name}; set every proposed task's `project` to \"{name}\"."
         ),
         None => "You are the supervisor for the whole fleet; propose work for any registered \
@@ -87,54 +126,66 @@ pub fn build_first_turn_prompt(
             .to_string(),
     };
     format!(
-        r#"You are the fleet supervisor for this Secondhand (`hand`) fleet, chatting with the operator through the Serenade desktop GUI.
+        r#"You are the fleet supervisor for this Secondhand (`hand`) fleet, interacting with the operator through the Serenade desktop GUI.
 
 {scope}
 
-=== hand supervisor session context ===
+=== supervisor runtime bootstrap (first turn only) ===
 {session_doc}
 
-=== current fleet state ===
-projects:
-{projects_json}
-
-tasks:
-{fleet_json}
-
-=== how you operate in Serenade ===
-- You cannot run hand commands yourself in this chat. The operator approves actions in the GUI.
+=== Serenade interaction contract ===
+- Serenade presentation/chat history is not workflow truth.
+- A fresh Hand-owned context is injected immediately before every reasoning turn. Treat that fresh context as authoritative when it conflicts with remembered conversation state.
+- On current Hand this context comes from `hand orient`; legacy Hand 0.6 falls back to `hand session start`.
+- Do not infer completion/currentness from conversational memory, provider session identity, or a worker saying `done`.
+- Workflow-changing actions remain operator-approved through typed Serenade actions during this transition.
 - To propose work, emit a fenced code block labeled `tasks` containing a JSON array, one object per task:
 ```tasks
 [{{"title": "...", "project": "<project name>", "kind": "scout|ship", "executionClass": "mechanical|standard|deep", "description": "...", "tags": ["..."]}}]
 ```
-- Serenade shows each entry as an approval card; approval writes the brief and runs `hand spawn`, which launches a real worker.
-- Follow the session context above for scout-vs-ship and execution-class guidance. Keep replies short and operator-focused. Ask only genuinely operator-owned questions.
+- Serenade shows each entry as an approval card; approval writes the brief and invokes the verified Hand mutation adapter.
+- Keep replies short and operator-focused. Ask only genuinely operator-owned questions.
 
 Operator: {message}"#,
         session_doc = truncate(session_doc.to_string(), CONTEXT_BUDGET / 2),
-        fleet_json = truncate(fleet_json.to_string(), CONTEXT_BUDGET / 4),
-        projects_json = truncate(projects_json.to_string(), CONTEXT_BUDGET / 4),
         message = message,
     )
 }
 
-/// Run `opencode run --format json [--session <id>] <message>` in the fleet
-/// home. Fixed arguments only; the message is a single positional argument.
+/// Run `opencode run --format json [--session <id>] <message>` in the selected
+/// fleet/project scope. Every turn receives fresh Hand-owned orientation before
+/// the operator message reaches the provider runtime.
 pub fn run_supervisor_turn(
     message: &str,
     session_id: Option<&str>,
-    fleet_home: &PathBuf,
+    cwd: &PathBuf,
 ) -> Result<(Option<String>, String), SerenadeError> {
+    let turn_prompt = match fresh_hand_context(cwd) {
+        Some((source, context)) => format!(
+            "=== FRESH HAND CONTEXT — AUTHORITATIVE FOR THIS TURN ===\nsource: {source}\n\
+             Do not substitute remembered chat state for these current facts.\n\n{}\n\n\
+             === SERENADE TURN ===\n{}",
+            truncate(context, CONTEXT_BUDGET),
+            message,
+        ),
+        None => format!(
+            "=== HAND CONTEXT REFRESH REQUIRED ===\n\
+             Serenade could not refresh Hand directly from PATH. Before reasoning, run `hand orient`; \
+             if this is legacy Hand 0.6 where `orient` is unavailable, run `hand session start` instead. \
+             Treat that result as authoritative over remembered chat state.\n\n=== SERENADE TURN ===\n{message}"
+        ),
+    };
+
     let mut cmd = Command::new("opencode");
     cmd.args(["run", "--format", "json"])
-        .current_dir(fleet_home)
+        .current_dir(cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::null());
     if let Some(id) = session_id {
         cmd.args(["--session", id]);
     }
-    cmd.arg(message);
+    cmd.arg(&turn_prompt);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -164,8 +215,7 @@ pub fn run_supervisor_turn(
 
     // Drain both pipes concurrently while waiting: a supervisor turn can emit
     // megabytes of JSON events (tool calls embed file contents). If nobody
-    // reads while the child runs, the OS pipe buffer fills, the child blocks
-    // on write, and the turn deadlocks into the timeout.
+    // reads while the child runs, the OS pipe buffer fills and deadlocks.
     let mut stdout_pipe = child.stdout.take().expect("stdout piped");
     let mut stderr_pipe = child.stderr.take().expect("stderr piped");
     let stdout_thread = std::thread::spawn(move || {
@@ -250,11 +300,20 @@ mod tests {
     }
 
     #[test]
-    fn first_turn_prompt_contains_protocol() {
-        let prompt = build_first_turn_prompt("SESSION", "{\"task_count\":0}", "[]", "do stuff", None);
+    fn first_turn_prompt_contains_protocol_without_private_snapshot() {
+        let prompt = build_first_turn_prompt(
+            "SESSION",
+            "PRIVATE_FLEET_JSON",
+            "PRIVATE_PROJECT_JSON",
+            "do stuff",
+            None,
+        );
         assert!(prompt.contains("```tasks"));
         assert!(prompt.contains("SESSION"));
         assert!(prompt.contains("do stuff"));
+        assert!(prompt.contains("presentation/chat history is not workflow truth"));
+        assert!(!prompt.contains("PRIVATE_FLEET_JSON"));
+        assert!(!prompt.contains("PRIVATE_PROJECT_JSON"));
     }
 
     #[test]
