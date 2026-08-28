@@ -9,7 +9,7 @@ import { Select } from "@/components/ui/input";
 import { ClassBadge, Mono, TypeBadge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { useApi } from "@/lib/api";
-import { useCreateTask } from "@/hooks/use-tasks";
+import { InteractionGateway } from "@/lib/interaction/gateway";
 import { useProjects } from "@/hooks/use-projects";
 import { useUiStore } from "@/state/ui-store";
 import { toAppError } from "@/types/domain";
@@ -115,9 +115,9 @@ const FLEET_SCOPE = "fleet";
 
 export function SupervisorPage() {
   const api = useApi();
+  const interaction = useMemo(() => new InteractionGateway(api), [api]);
   const toast = useToast();
   const { data: projects } = useProjects();
-  const createTask = useCreateTask();
   const { getSupervisorChat, setSupervisorChat, selectedProjectId } = useUiStore();
   const [scope, setScope] = useState<string>(() =>
     selectedProjectId ?? FLEET_SCOPE,
@@ -127,13 +127,15 @@ export function SupervisorPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Chat state lives in the global UI store, so history survives navigating
-  // away and back — and each scope keeps its own conversation.
+  // away and back — and each scope keeps its own conversation. It is UX state,
+  // not canonical Fleet truth.
   const chat = getSupervisorChat(scope);
 
   const projectId = scope === FLEET_SCOPE ? undefined : scope;
 
+  // Reasoning-required path: prose goes to the Supervisor Harness.
   const sendMutation = useMutation({
-    mutationFn: (message: string) => api.supervisorChat(message, projectId),
+    mutationFn: (message: string) => interaction.sendReasoningInput(message, projectId),
     onSuccess: (reply) => {
       setSupervisorChat(scope, {
         ...chat,
@@ -182,13 +184,15 @@ export function SupervisorPage() {
   const reset = async () => {
     await api.supervisorReset(projectId);
     setSupervisorChat(scope, { messages: [], createdTitles: [], counter: 0 });
-    toast.showToast({ variant: "info", title: "Supervisor session reset" });
+    toast.showToast({ variant: "info", title: "Supervisor runtime reset" });
   };
 
+  // Exact typed-action path: approval dispatches directly through Hand's
+  // mutation adapter. It does not spend another Supervisor/LLM turn.
   const spawn = async (proposal: TaskProposal) => {
     setBusyTitles((s) => new Set(s).add(proposal.title));
     try {
-      const task = await createTask.mutateAsync({
+      const task = await interaction.createTask({
         projectId: proposal.project,
         title: proposal.title,
         description: proposal.description,
@@ -234,7 +238,7 @@ export function SupervisorPage() {
       }
       subtitle={
         scope === FLEET_SCOPE
-          ? "Chat with the fleet's supervising agent — it plans work, you approve the dispatches"
+          ? "Chat with the fleet's supervising agent — it plans work, you approve exact dispatches"
           : `Project supervisor for ${scope} — runs inside the project clone, proposes work for this repo`
       }
       actions={
@@ -255,7 +259,7 @@ export function SupervisorPage() {
           {chat.messages.length > 0 && (
             <Button variant="ghost" onClick={reset} disabled={sendMutation.isPending}>
               <RotateCcw size={13} />
-              New session
+              New runtime
             </Button>
           )}
         </div>
@@ -268,13 +272,13 @@ export function SupervisorPage() {
               <BrainCircuit size={22} className="text-fg-subtle" />
               <p className="text-xs font-medium text-fg-muted">
                 {scope === FLEET_SCOPE
-                  ? "Ask the supervisor to plan work for the fleet"
-                  : `Ask the ${scope} supervisor to plan work`}
+                  ? "Ask the supervisor to reason about work for the fleet"
+                  : `Ask the ${scope} supervisor to reason about work`}
               </p>
               <p className="max-w-md text-[11px] leading-relaxed text-fg-subtle">
                 {scope === FLEET_SCOPE
-                  ? "The supervisor sees your fleet's live state and hand's supervision contract; proposed tasks appear as approval cards below."
-                  : "This supervisor runs inside the project clone and can read the codebase. It proposes work for this project only; proposals appear as approval cards below."}
+                  ? "The Supervisor re-orients against Hand before reasoning; proposed exact tasks appear as approval cards below."
+                  : "This Supervisor runs inside the project clone and re-orients against Hand before reasoning. Proposed work appears as approval cards below."}
               </p>
               {scope !== FLEET_SCOPE && !scopeProject && (
                 <p className="text-[11px] text-warning">
@@ -311,7 +315,7 @@ export function SupervisorPage() {
                 </span>
                 <p className="flex items-center gap-2 pt-1 text-xs text-fg-subtle">
                   <Loader2 size={12} className="animate-spin" />
-                  supervisor is thinking… (can take a minute)
+                  supervisor is orienting & reasoning… (can take a minute)
                 </p>
               </div>
             )}
@@ -365,8 +369,8 @@ export function SupervisorPage() {
             }}
             placeholder={
               scope === FLEET_SCOPE
-                ? "Tell the supervisor what you want done…"
-                : `Tell the ${scope} supervisor what you want done…`
+                ? "Tell the supervisor what you want reasoned/planned…"
+                : `Tell the ${scope} supervisor what you want reasoned/planned…`
             }
             className="w-full resize-y rounded-lg border border-line bg-surface px-3 py-2 text-xs text-fg placeholder:text-fg-subtle focus:border-accent/70 focus:outline-none focus:ring-1 focus:ring-accent/40"
           />
