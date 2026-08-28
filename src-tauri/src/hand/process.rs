@@ -4,6 +4,20 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use wait_timeout::ChildExt;
 
+/// CREATE_NO_WINDOW: GUI apps must not flash a console for every short-lived
+/// subprocess (hand, git) they spawn.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(windows)]
+fn no_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn no_window(_cmd: &mut Command) {}
+
 /// A parsed hand error document:
 /// ```text
 /// error: <message>
@@ -95,6 +109,7 @@ impl HandRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null());
+        no_window(&mut cmd);
 
         if let Some(home) = &self.fleet_home {
             cmd.env("HAND_HOME", absolutize(home));

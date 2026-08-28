@@ -14,12 +14,16 @@ use crate::fleet_files::{valid_task_id, FleetFiles};
 use crate::hand::model::{FleetJson, ProjectJson, StatusJson};
 use crate::hand::{toon, HandRunner};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::Manager;
 
 struct AppCtx {
     config: ConfigStore,
+    fleet_cache: Mutex<Option<(Instant, Arc<FleetJson>)>>,
+    git_cache: Mutex<HashMap<String, (Instant, git::GitInfo)>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +72,49 @@ fn global_runner(config: &AppConfig) -> HandRunner {
 
 fn fleet_status(runner: &HandRunner) -> Result<FleetJson, SerenadeError> {
     runner.json(&["status", "--json"], 20)
+}
+
+/// TTL-cached fleet status. Every polled view (tasks, agents, worktrees,
+/// reports, events, routes) needs the same `hand status --json`; without this
+/// each poll spawns its own hand process — the main source of UI lag and
+/// console-window flashing on Windows. The lock is held across the run so
+/// concurrent callers dedupe into a single process.
+const FLEET_CACHE_TTL: Duration = Duration::from_millis(3_000);
+
+fn fleet_status_cached(runner: &HandRunner) -> Result<Arc<FleetJson>, SerenadeError> {
+    let ctx = CTX.get().expect("ctx");
+    let mut guard = ctx.fleet_cache.lock().expect("fleet cache");
+    if let Some((at, fleet)) = guard.as_ref() {
+        if at.elapsed() < FLEET_CACHE_TTL {
+            return Ok(fleet.clone());
+        }
+    }
+    let fleet = Arc::new(fleet_status(runner)?);
+    *guard = Some((Instant::now(), fleet.clone()));
+    Ok(fleet)
+}
+
+/// Drop the cache after mutations so the UI immediately reflects changes.
+fn invalidate_fleet_cache() {
+    let ctx = CTX.get().expect("ctx");
+    *ctx.fleet_cache.lock().expect("fleet cache") = None;
+}
+
+/// Cached read-only git enrichment per worktree path (git is fast but four
+/// subprocesses per worktree per poll still churns).
+const GIT_CACHE_TTL: Duration = Duration::from_secs(20);
+
+fn git_inspect_cached(path: &str) -> git::GitInfo {
+    let ctx = CTX.get().expect("ctx");
+    let mut guard = ctx.git_cache.lock().expect("git cache");
+    if let Some((at, info)) = guard.get(path) {
+        if at.elapsed() < GIT_CACHE_TTL {
+            return info.clone();
+        }
+    }
+    let info = git::inspect(path);
+    guard.insert(path.to_string(), (Instant::now(), info.clone()));
+    info
 }
 
 fn task_status(runner: &HandRunner, task_id: &str) -> Result<StatusJson, SerenadeError> {
@@ -252,7 +299,7 @@ fn project_get(project_id: String) -> Result<Project, SerenadeError> {
 #[tauri::command]
 fn tasks_list(project_id: Option<String>) -> Result<Vec<Task>, SerenadeError> {
     let (_, runner, files) = setup()?;
-    let fleet = fleet_status(&runner)?;
+    let fleet = fleet_status_cached(&runner)?;
     let held = held_ids(&fleet);
     Ok(fleet
         .tasks
@@ -265,6 +312,20 @@ fn tasks_list(project_id: Option<String>) -> Result<Vec<Task>, SerenadeError> {
 #[tauri::command]
 fn task_get(task_id: String) -> Result<Task, SerenadeError> {
     let (_, runner, files) = setup()?;
+    if !valid_task_id(&task_id) {
+        return Err(SerenadeError::new(
+            Code::InvalidPath,
+            "Invalid task id",
+            format!("{task_id:?} is not a valid hand task id."),
+        ));
+    }
+    // Serve from the cached fleet snapshot when possible; fall back to a
+    // direct per-task call (which also reports not-found).
+    let fleet = fleet_status_cached(&runner)?;
+    if let Some(s) = fleet.tasks.iter().find(|t| t.id == task_id) {
+        let held = fleet.holds.iter().any(|h| h.id == task_id);
+        return Ok(adapter::to_task(s, &files, held));
+    }
     let s = task_status(&runner, &task_id)?;
     let held = s.held.is_some();
     Ok(adapter::to_task(&s, &files, held))
@@ -277,7 +338,7 @@ fn task_get(task_id: String) -> Result<Task, SerenadeError> {
 #[tauri::command]
 fn agents_list() -> Result<Vec<AgentRun>, SerenadeError> {
     let (_, runner, _) = setup()?;
-    let fleet = fleet_status(&runner)?;
+    let fleet = fleet_status_cached(&runner)?;
     let mut agents = Vec::new();
     for s in &fleet.tasks {
         if let Some(attempts) = &s.attempts {
@@ -346,7 +407,7 @@ fn agent_from_attempt(s: &StatusJson, a: &hand::model::AttemptJson) -> AgentRun 
 #[tauri::command]
 fn worktrees_list(project_id: Option<String>) -> Result<Vec<Worktree>, SerenadeError> {
     let (_, runner, _) = setup()?;
-    let fleet = fleet_status(&runner)?;
+    let fleet = fleet_status_cached(&runner)?;
     let mut out = Vec::new();
     for s in &fleet.tasks {
         if project_id.as_ref().is_some_and(|p| *p != s.project) {
@@ -355,7 +416,7 @@ fn worktrees_list(project_id: Option<String>) -> Result<Vec<Worktree>, SerenadeE
         let Some(mut w) = adapter::to_worktree(s) else { continue };
         // Read-only git enrichment (best-effort; path may be back in the pool).
         if std::path::Path::new(&w.path).is_dir() {
-            let info = git::inspect(&w.path);
+            let info = git_inspect_cached(&w.path);
             if let Some(b) = info.branch {
                 w.branch = b;
             }
@@ -403,7 +464,7 @@ fn report_from_content(
 #[tauri::command]
 fn reports_list(project_id: Option<String>) -> Result<Vec<Report>, SerenadeError> {
     let (_, runner, files) = setup()?;
-    let fleet = fleet_status(&runner)?;
+    let fleet = fleet_status_cached(&runner)?;
     let project_of: std::collections::HashMap<String, String> = fleet
         .tasks
         .iter()
@@ -445,7 +506,7 @@ fn report_get(report_id: String) -> Result<Report, SerenadeError> {
         )
         .not_recoverable());
     }
-    let fleet = fleet_status(&runner)?;
+    let fleet = fleet_status_cached(&runner)?;
     let project = fleet
         .tasks
         .iter()
@@ -501,7 +562,7 @@ fn routes_list() -> Result<RoutesPayload, SerenadeError> {
         });
     }
     // Enrich providers with live usage when the fleet is reachable.
-    if let Ok(fleet) = fleet_status(&runner) {
+    if let Ok(fleet) = fleet_status_cached(&runner) {
         for p in &mut providers {
             p.active_workers = fleet
                 .tasks
@@ -549,6 +610,15 @@ fn events_recent(limit: Option<u32>) -> Result<Vec<FleetEvent>, SerenadeError> {
     let (_, runner, files) = setup()?;
     let log_mtime = fleet_files::file_mtime(&files.events_log()).unwrap_or_default();
     let lines = files.read_events_log();
+    // One fleet lookup for the whole batch (task → project), not one per event.
+    let project_of: HashMap<String, String> = fleet_status_cached(&runner)
+        .map(|f| {
+            f.tasks
+                .iter()
+                .map(|t| (t.id.clone(), t.project.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
     let mut out = Vec::new();
     for (i, line) in lines.into_iter().take(limit.unwrap_or(50) as usize).enumerate() {
         let mut parts = line.splitn(3, ' ');
@@ -556,11 +626,7 @@ fn events_recent(limit: Option<u32>) -> Result<Vec<FleetEvent>, SerenadeError> {
         let target = parts.next().unwrap_or("").trim_matches(':').to_string();
         let note = parts.next().unwrap_or("").trim().to_string();
         let task_id = valid_task_id(&target).then_some(target);
-        let project_id = task_id.as_ref().and_then(|id| {
-            fleet_status(&runner)
-                .ok()
-                .and_then(|f| f.tasks.iter().find(|t| t.id == *id).map(|t| t.project.clone()))
-        });
+        let project_id = task_id.as_ref().and_then(|id| project_of.get(id).cloned());
         out.push(FleetEvent {
             id: format!("e{i}"),
             kind: kind.clone(),
@@ -721,7 +787,7 @@ fn task_create(input: serde_json::Value) -> Result<Task, SerenadeError> {
             "The title must contain letters or digits.",
         ));
     }
-    let fleet = fleet_status(&runner)?;
+    let fleet = fleet_status_cached(&runner)?;
     let existing: HashSet<String> = fleet.tasks.iter().map(|t| t.id.clone()).collect();
     let mut id = base.clone();
     let mut n = 1;
@@ -738,6 +804,7 @@ fn task_create(input: serde_json::Value) -> Result<Task, SerenadeError> {
         args.push("--scout");
     }
     runner.expect(&args, 180)?;
+    invalidate_fleet_cache();
 
     let s = task_status(&runner, &id)?;
     Ok(adapter::to_task(&s, &files, false))
@@ -757,6 +824,7 @@ fn task_send_message(task_id: String, message: String) -> Result<(), SerenadeErr
     // Bounded composer wait keeps the UI responsive; hand encodes
     // retry-safety in exit codes 6/7 and the error document.
     runner.expect(&["send", &task_id, msg, "--wait", "10s"], 30)?;
+    invalidate_fleet_cache();
     Ok(())
 }
 
@@ -764,6 +832,7 @@ fn task_send_message(task_id: String, message: String) -> Result<(), SerenadeErr
 fn task_retry(task_id: String) -> Result<(), SerenadeError> {
     let (_, runner, _) = setup()?;
     runner.expect(&["reopen", &task_id], 180)?;
+    invalidate_fleet_cache();
     Ok(())
 }
 
@@ -772,6 +841,7 @@ fn task_stop(task_id: String) -> Result<(), SerenadeError> {
     let (_, runner, _) = setup()?;
     // Destructive: the UI must confirm before invoking (architecture.md §21).
     runner.expect(&["teardown", &task_id, "--force"], 120)?;
+    invalidate_fleet_cache();
     Ok(())
 }
 
@@ -779,6 +849,7 @@ fn task_stop(task_id: String) -> Result<(), SerenadeError> {
 fn task_promote(task_id: String) -> Result<Task, SerenadeError> {
     let (_, runner, files) = setup()?;
     runner.expect(&["promote", &task_id], 180)?;
+    invalidate_fleet_cache();
     let s = task_status(&runner, &task_id)?;
     Ok(adapter::to_task(&s, &files, false))
 }
@@ -789,6 +860,7 @@ fn worktree_cleanup(worktree_id: String) -> Result<(), SerenadeError> {
     // worktree_id == task id in this adapter. teardown without --force:
     // hand refuses when unlanded work exists, which is the safety we want.
     runner.expect(&["teardown", &worktree_id], 120)?;
+    invalidate_fleet_cache();
     Ok(())
 }
 
@@ -798,8 +870,17 @@ fn worktree_cleanup(worktree_id: String) -> Result<(), SerenadeError> {
 
 fn worktree_path_for(task_id: &str) -> Result<PathBuf, SerenadeError> {
     let (_, runner, _) = setup()?;
-    let s = task_status(&runner, task_id)?;
-    let path = s.worktree.ok_or_else(|| {
+    // Prefer the cached snapshot; fall back to a direct status call.
+    let path = fleet_status_cached(&runner)
+        .ok()
+        .and_then(|f| {
+            f.tasks
+                .iter()
+                .find(|t| t.id == task_id)
+                .and_then(|t| t.worktree.clone())
+        })
+        .or_else(|| task_status(&runner, task_id).ok().and_then(|s| s.worktree));
+    let path = path.ok_or_else(|| {
         SerenadeError::new(
             Code::WorktreeNotFound,
             "No worktree for this task",
@@ -840,6 +921,8 @@ pub fn run() {
             let _ = std::fs::create_dir_all(&data_dir);
             let _ = CTX.set(AppCtx {
                 config: ConfigStore::new(data_dir),
+                fleet_cache: Mutex::new(None),
+                git_cache: Mutex::new(HashMap::new()),
             });
             if cfg!(debug_assertions) {
                 app.handle().plugin(

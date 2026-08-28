@@ -6,7 +6,7 @@ export function useReports(projectId?: string) {
   return useQuery({
     queryKey: ["reports", projectId ?? "all"],
     queryFn: () => api.listReports(projectId),
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
 }
 

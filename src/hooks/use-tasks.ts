@@ -13,7 +13,7 @@ export function useTasks(projectId?: string) {
   return useQuery({
     queryKey: taskKeys.list(projectId),
     queryFn: () => api.listTasks(projectId),
-    refetchInterval: 5_000,
+    refetchInterval: 10_000,
   });
 }
 
@@ -23,7 +23,7 @@ export function useTask(taskId: string) {
     queryKey: taskKeys.detail(taskId),
     queryFn: () => api.getTask(taskId),
     enabled: !!taskId,
-    refetchInterval: 3_000,
+    refetchInterval: 5_000,
   });
 }
 

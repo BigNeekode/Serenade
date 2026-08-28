@@ -7,7 +7,7 @@ export function useAppConfig() {
   return useQuery({
     queryKey: ["config"],
     queryFn: () => api.getConfig(),
-    refetchInterval: 30_000,
+    refetchInterval: 120_000,
   });
 }
 
@@ -29,7 +29,7 @@ export function useEnvironment() {
   return useQuery({
     queryKey: ["environment"],
     queryFn: () => api.validateEnvironment(),
-    refetchInterval: 30_000,
+    refetchInterval: 120_000,
   });
 }
 

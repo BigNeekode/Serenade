@@ -9,7 +9,9 @@ export const queryClient = new QueryClient({
         if (error instanceof SerenadeApiError && !error.recoverable) return false;
         return failureCount < 2;
       },
-      refetchOnWindowFocus: true,
+      // Views poll at their own cadence; focus-triggered refetches would
+      // burst hand processes every alt-tab.
+      refetchOnWindowFocus: false,
     },
     mutations: { retry: false },
   },

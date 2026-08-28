@@ -6,6 +6,6 @@ export function useEvents(limit = 50) {
   return useQuery({
     queryKey: ["events", limit],
     queryFn: () => api.listEvents(limit),
-    refetchInterval: 15_000,
+    refetchInterval: 30_000,
   });
 }

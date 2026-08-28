@@ -3,8 +3,11 @@
 
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::Duration;
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[derive(Debug, Clone, Default)]
 pub struct GitInfo {
     pub branch: Option<String>,
     pub git_status: Option<String>,
@@ -14,15 +17,19 @@ pub struct GitInfo {
 }
 
 fn git(path: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
         .arg(path)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .stdin(Stdio::null())
-        .output()
-        .ok()?;
+        .stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW); // no console flash
+    }
+    let out = cmd.output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -30,18 +37,21 @@ fn git(path: &Path, args: &[&str]) -> Option<String> {
 }
 
 /// Best-effort enrichment; every field degrades to None independently.
+/// Runs one `status --porcelain` (shared) plus branch/rev-list/log.
 pub fn inspect(path: &str) -> GitInfo {
     let p = Path::new(path);
+    let porcelain = git(p, &["status", "--porcelain"]);
     GitInfo {
         branch: git(p, &["branch", "--show-current"]).filter(|b| !b.is_empty()),
-        git_status: git(p, &["status", "--porcelain"]).map(|out| {
+        git_status: porcelain.as_ref().map(|out| {
             if out.is_empty() {
                 "clean".to_string()
             } else {
                 "dirty".to_string()
             }
         }),
-        changed_files: git(p, &["status", "--porcelain"])
+        changed_files: porcelain
+            .as_ref()
             .map(|out| out.lines().filter(|l| !l.trim().is_empty()).count() as u32),
         ahead_behind: git(p, &["rev-list", "--left-right", "--count", "@{u}...HEAD"])
             .and_then(|out| {
@@ -53,8 +63,3 @@ pub fn inspect(path: &str) -> GitInfo {
         last_commit: git(p, &["log", "-1", "--pretty=%s"]),
     }
 }
-
-/// Timeout-guarded spawn variant is unnecessary here: git against a local
-/// worktree is fast; commands above are all read-only.
-#[allow(dead_code)]
-fn unused(_: Duration) {}

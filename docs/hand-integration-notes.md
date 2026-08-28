@@ -153,7 +153,34 @@ help[N]:
 | Structured logs | **partial** | `state/<id>.status` plain lines; cursor = line offset |
 | Full-text search | **yes** | `search --json` (unused by UI yet) |
 
-## 10. UI status derivation (hand → board columns)
+## 11. Windows runtime requirements (verified live)
+
+1. **herdr panes must run a POSIX shell.** hand types POSIX-syntax worker launch
+   commands (`VAR=val cmd && …`) into herdr panes and fails closed on cmd.exe /
+   PowerShell (the command sits at a `>>` continuation prompt and the harness
+   never starts). Fix: set herdr's shell to Git Bash and reload:
+   `%APPDATA%\herdr\config.toml` → `[terminal] default_shell = "C:\Program Files\Git\bin\bash.exe"`,
+   then `herdr server reload-config`.
+2. **herdr server must be running** before spawn (`herdr` in any window, or
+   `herdr status server` to check). spawn fails with `server_not_running` otherwise.
+3. **treehouse install can dangle**: the `.local\bin\treehouse.cmd` shim can
+   outlive its target (`AppData\Local\treehouse\treehouse.exe`). `hand doctor`
+   reports it installed (presence check) while `treehouse --version` fails.
+   Reinstall: `irm https://kunchenguid.github.io/treehouse/install.ps1 | iex`.
+4. **Claude Code harness shows a trust dialog** ("Allow external CLAUDE.md file
+   imports?") when the operator's global config imports files. hand refuses to
+   answer unknown dialogs; the operator must answer it once per project in the
+   herdr pane, or use a different harness (e.g. `hand config set harness opencode`).
+5. A spawn that fails mid-launch (harness never confirmed) leaves the task
+   `open/provisioning`. `hand reconcile <id>` unwinds it cleanly ("unwind-failed-
+   provisioning"), after which `hand reopen <id>` retries. There is no
+   non-destructive stop for a provisioning task.
+
+Live verification: scout `survey-kanvas` on project `Kanvas-Kosong-Web`
+(local-only mode), harness opencode, treehouse v2.3.0, herdr 0.8.2 — attempt
+reached `running` with `agent_state: working`.
+
+## 12. UI status derivation (hand → board columns)
 
 hand has no board states; Serenade derives them:
 

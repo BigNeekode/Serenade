@@ -6,7 +6,7 @@ export function useWorktrees(projectId?: string) {
   return useQuery({
     queryKey: ["worktrees", projectId ?? "all"],
     queryFn: () => api.listWorktrees(projectId),
-    refetchInterval: 10_000,
+    refetchInterval: 20_000,
   });
 }
 
