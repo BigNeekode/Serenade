@@ -11,12 +11,12 @@ describe("classifyHandCompatibility", () => {
     });
   });
 
-  it("recognizes the 0.7 transition contract", () => {
+  it("recognizes 0.7 but fails closed until that release is verified", () => {
     const result = classifyHandCompatibility("hand version 0.7.3");
     expect(result).toMatchObject({
-      mode: "supported",
+      mode: "warning",
       contract: "transition-0.7",
-      mutationsAllowed: true,
+      mutationsAllowed: false,
     });
   });
 
