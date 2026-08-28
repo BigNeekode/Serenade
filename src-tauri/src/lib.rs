@@ -6,6 +6,7 @@ mod fleet_files;
 mod git;
 mod hand;
 mod local;
+mod supervisor;
 
 use crate::config::{AppConfig, ConfigStore};
 use crate::domain::*;
@@ -24,6 +25,7 @@ struct AppCtx {
     config: ConfigStore,
     fleet_cache: Mutex<Option<(Instant, Arc<FleetJson>)>>,
     git_cache: Mutex<HashMap<String, (Instant, git::GitInfo)>>,
+    supervisor_session: Mutex<Option<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -144,12 +146,12 @@ static CTX: std::sync::OnceLock<AppCtx> = std::sync::OnceLock::new();
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-fn config_get() -> Result<AppConfig, SerenadeError> {
+async fn config_get() -> Result<AppConfig, SerenadeError> {
     Ok(CTX.get().expect("ctx").config.load())
 }
 
 #[tauri::command]
-fn config_update(input: serde_json::Value) -> Result<AppConfig, SerenadeError> {
+async fn config_update(input: serde_json::Value) -> Result<AppConfig, SerenadeError> {
     CTX.get()
         .expect("ctx")
         .config
@@ -158,7 +160,7 @@ fn config_update(input: serde_json::Value) -> Result<AppConfig, SerenadeError> {
 }
 
 #[tauri::command]
-fn environment_validate() -> Result<EnvironmentStatus, SerenadeError> {
+async fn environment_validate() -> Result<EnvironmentStatus, SerenadeError> {
     let config = CTX.get().expect("ctx").config.load();
     let mut issues = Vec::new();
 
@@ -202,7 +204,7 @@ fn environment_validate() -> Result<EnvironmentStatus, SerenadeError> {
 }
 
 #[tauri::command]
-fn fleet_init(path: String) -> Result<(), SerenadeError> {
+async fn fleet_init(path: String) -> Result<(), SerenadeError> {
     let config = CTX.get().expect("ctx").config.load();
     if path.trim().is_empty() {
         return Err(SerenadeError::new(
@@ -216,7 +218,7 @@ fn fleet_init(path: String) -> Result<(), SerenadeError> {
 }
 
 #[tauri::command]
-fn diagnostics_get() -> Result<Diagnostics, SerenadeError> {
+async fn diagnostics_get() -> Result<Diagnostics, SerenadeError> {
     let config = CTX.get().expect("ctx").config.load();
     let version = global_runner(&config)
         .capture(&["--version"], 10)
@@ -251,7 +253,7 @@ fn diagnostics_get() -> Result<Diagnostics, SerenadeError> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-fn projects_list() -> Result<Vec<Project>, SerenadeError> {
+async fn projects_list() -> Result<Vec<Project>, SerenadeError> {
     let (config, runner, files) = setup()?;
     let raw: Vec<ProjectJson> = runner.json(&["project", "list", "--json"], 15)?;
     let _ = config;
@@ -277,8 +279,8 @@ fn projects_list() -> Result<Vec<Project>, SerenadeError> {
 }
 
 #[tauri::command]
-fn project_get(project_id: String) -> Result<Project, SerenadeError> {
-    let projects = projects_list()?;
+async fn project_get(project_id: String) -> Result<Project, SerenadeError> {
+    let projects = projects_list().await?;
     projects
         .into_iter()
         .find(|p| p.id == project_id)
@@ -297,7 +299,7 @@ fn project_get(project_id: String) -> Result<Project, SerenadeError> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-fn tasks_list(project_id: Option<String>) -> Result<Vec<Task>, SerenadeError> {
+async fn tasks_list(project_id: Option<String>) -> Result<Vec<Task>, SerenadeError> {
     let (_, runner, files) = setup()?;
     let fleet = fleet_status_cached(&runner)?;
     let held = held_ids(&fleet);
@@ -310,7 +312,7 @@ fn tasks_list(project_id: Option<String>) -> Result<Vec<Task>, SerenadeError> {
 }
 
 #[tauri::command]
-fn task_get(task_id: String) -> Result<Task, SerenadeError> {
+async fn task_get(task_id: String) -> Result<Task, SerenadeError> {
     let (_, runner, files) = setup()?;
     if !valid_task_id(&task_id) {
         return Err(SerenadeError::new(
@@ -336,7 +338,7 @@ fn task_get(task_id: String) -> Result<Task, SerenadeError> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-fn agents_list() -> Result<Vec<AgentRun>, SerenadeError> {
+async fn agents_list() -> Result<Vec<AgentRun>, SerenadeError> {
     let (_, runner, _) = setup()?;
     let fleet = fleet_status_cached(&runner)?;
     let mut agents = Vec::new();
@@ -405,7 +407,7 @@ fn agent_from_attempt(s: &StatusJson, a: &hand::model::AttemptJson) -> AgentRun 
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-fn worktrees_list(project_id: Option<String>) -> Result<Vec<Worktree>, SerenadeError> {
+async fn worktrees_list(project_id: Option<String>) -> Result<Vec<Worktree>, SerenadeError> {
     let (_, runner, _) = setup()?;
     let fleet = fleet_status_cached(&runner)?;
     let mut out = Vec::new();
@@ -462,7 +464,7 @@ fn report_from_content(
 }
 
 #[tauri::command]
-fn reports_list(project_id: Option<String>) -> Result<Vec<Report>, SerenadeError> {
+async fn reports_list(project_id: Option<String>) -> Result<Vec<Report>, SerenadeError> {
     let (_, runner, files) = setup()?;
     let fleet = fleet_status_cached(&runner)?;
     let project_of: std::collections::HashMap<String, String> = fleet
@@ -492,7 +494,7 @@ fn reports_list(project_id: Option<String>) -> Result<Vec<Report>, SerenadeError
 }
 
 #[tauri::command]
-fn report_get(report_id: String) -> Result<Report, SerenadeError> {
+async fn report_get(report_id: String) -> Result<Report, SerenadeError> {
     let (_, runner, files) = setup()?;
     let task_id = report_id
         .strip_prefix("r_")
@@ -523,7 +525,7 @@ fn report_get(report_id: String) -> Result<Report, SerenadeError> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-fn routes_list() -> Result<RoutesPayload, SerenadeError> {
+async fn routes_list() -> Result<RoutesPayload, SerenadeError> {
     let (_, runner, _) = setup()?;
     let doc = runner.expect(&["config"], 15)?;
     let mut providers = Vec::new();
@@ -606,7 +608,7 @@ fn event_severity(kind: &str) -> &'static str {
 }
 
 #[tauri::command]
-fn events_recent(limit: Option<u32>) -> Result<Vec<FleetEvent>, SerenadeError> {
+async fn events_recent(limit: Option<u32>) -> Result<Vec<FleetEvent>, SerenadeError> {
     let (_, runner, files) = setup()?;
     let log_mtime = fleet_files::file_mtime(&files.events_log()).unwrap_or_default();
     let lines = files.read_events_log();
@@ -651,7 +653,7 @@ fn log_level_for(line: &str) -> &'static str {
 }
 
 #[tauri::command]
-fn task_logs_read(
+async fn task_logs_read(
     request: serde_json::Value,
 ) -> Result<LogChunkResponse, SerenadeError> {
     #[derive(Deserialize)]
@@ -672,9 +674,61 @@ fn task_logs_read(
             req.task_id,
         ));
     }
-    let (_, _, files) = setup()?;
-    let lines = files.read_status_lines(&req.task_id)?;
+    let (runner, files) = {
+        let (_, runner, files) = setup()?;
+        (runner, files)
+    };
+    let mut lines = files.read_status_lines(&req.task_id)?;
     let mtime = fleet_files::file_mtime(&files.status_file(&req.task_id)).unwrap_or_default();
+    let mut source = "worker";
+
+    // Some harnesses (e.g. opencode) never follow hand's report protocol, so
+    // the status stream stays empty. Synthesize system lines from fleet state
+    // so the log tab still tells the operator what is going on.
+    if lines.is_empty() && req.cursor.is_none() {
+        if let Ok(fleet) = fleet_status_cached(&runner) {
+            if let Some(s) = fleet.tasks.iter().find(|t| t.id == req.task_id) {
+                let mut synth: Vec<String> = Vec::new();
+                synth.push(format!(
+                    "task {} created ({}/{})",
+                    s.id,
+                    s.kind,
+                    s.execution_class.as_deref().unwrap_or("standard")
+                ));
+                if let Some(h) = &s.harness {
+                    let model = s.model.as_deref().unwrap_or("default model");
+                    synth.push(format!("worker dispatched: {h} ({model})"));
+                }
+                match s.agent_state.as_deref() {
+                    Some("done") => synth.push(
+                        "agent finished its turn (herdr: done) but wrote no report line — \
+                         inspect the worktree diff and decide: send an instruction, or teardown"
+                            .to_string(),
+                    ),
+                    Some("idle") => synth.push(
+                        "agent pane is idle with nothing reported (idle-unreported) — \
+                         it may have stalled; send an instruction or check the pane"
+                            .to_string(),
+                    ),
+                    Some("blocked") => {
+                        synth.push("agent is blocked waiting for help".to_string())
+                    }
+                    Some("working") => {
+                        synth.push("agent is working (no progress lines yet)".to_string())
+                    }
+                    _ => {}
+                }
+                if s.held.is_some() {
+                    synth.push("task is on hold".to_string());
+                }
+                if !synth.is_empty() {
+                    lines = synth;
+                    source = "system";
+                }
+            }
+        }
+    }
+
     let start = req
         .cursor
         .and_then(|c| c.parse::<usize>().ok())
@@ -688,7 +742,7 @@ fn task_logs_read(
         .map(|(i, line)| LogLine {
             id: format!("{}-L{}", req.task_id, start + i),
             ts: mtime.clone(),
-            source: "worker".to_string(),
+            source: source.to_string(),
             level: log_level_for(line).to_string(),
             message: line.clone(),
         })
@@ -756,7 +810,7 @@ fn slugify(title: &str) -> String {
 }
 
 #[tauri::command]
-fn task_create(input: serde_json::Value) -> Result<Task, SerenadeError> {
+async fn task_create(input: serde_json::Value) -> Result<Task, SerenadeError> {
     let parsed: CreateTaskInput =
         serde_json::from_value(input).map_err(|e| {
             SerenadeError::new(Code::CommandFailed, "Invalid task input", e.to_string())
@@ -811,7 +865,7 @@ fn task_create(input: serde_json::Value) -> Result<Task, SerenadeError> {
 }
 
 #[tauri::command]
-fn task_send_message(task_id: String, message: String) -> Result<(), SerenadeError> {
+async fn task_send_message(task_id: String, message: String) -> Result<(), SerenadeError> {
     let (_, runner, _) = setup()?;
     let msg = message.trim();
     if msg.is_empty() {
@@ -829,7 +883,7 @@ fn task_send_message(task_id: String, message: String) -> Result<(), SerenadeErr
 }
 
 #[tauri::command]
-fn task_retry(task_id: String) -> Result<(), SerenadeError> {
+async fn task_retry(task_id: String) -> Result<(), SerenadeError> {
     let (_, runner, _) = setup()?;
     runner.expect(&["reopen", &task_id], 180)?;
     invalidate_fleet_cache();
@@ -837,7 +891,7 @@ fn task_retry(task_id: String) -> Result<(), SerenadeError> {
 }
 
 #[tauri::command]
-fn task_stop(task_id: String) -> Result<(), SerenadeError> {
+async fn task_stop(task_id: String) -> Result<(), SerenadeError> {
     let (_, runner, _) = setup()?;
     // Destructive: the UI must confirm before invoking (architecture.md §21).
     runner.expect(&["teardown", &task_id, "--force"], 120)?;
@@ -846,7 +900,7 @@ fn task_stop(task_id: String) -> Result<(), SerenadeError> {
 }
 
 #[tauri::command]
-fn task_promote(task_id: String) -> Result<Task, SerenadeError> {
+async fn task_promote(task_id: String) -> Result<Task, SerenadeError> {
     let (_, runner, files) = setup()?;
     runner.expect(&["promote", &task_id], 180)?;
     invalidate_fleet_cache();
@@ -855,7 +909,7 @@ fn task_promote(task_id: String) -> Result<Task, SerenadeError> {
 }
 
 #[tauri::command]
-fn worktree_cleanup(worktree_id: String) -> Result<(), SerenadeError> {
+async fn worktree_cleanup(worktree_id: String) -> Result<(), SerenadeError> {
     let (_, runner, _) = setup()?;
     // worktree_id == task id in this adapter. teardown without --force:
     // hand refuses when unlanded work exists, which is the safety we want.
@@ -891,22 +945,74 @@ fn worktree_path_for(task_id: &str) -> Result<PathBuf, SerenadeError> {
 }
 
 #[tauri::command]
-fn worktree_open_editor(worktree_id: String) -> Result<(), SerenadeError> {
+async fn worktree_open_editor(worktree_id: String) -> Result<(), SerenadeError> {
     let (config, _, _) = setup()?;
     let path = worktree_path_for(&worktree_id)?;
     local::open_editor(&path, &config.preferred_editor, config.custom_editor_path.as_deref())
 }
 
 #[tauri::command]
-fn worktree_open_folder(worktree_id: String) -> Result<(), SerenadeError> {
+async fn worktree_open_folder(worktree_id: String) -> Result<(), SerenadeError> {
     let path = worktree_path_for(&worktree_id)?;
     local::open_folder(&path)
 }
 
 #[tauri::command]
-fn worktree_open_terminal(worktree_id: String) -> Result<(), SerenadeError> {
+async fn worktree_open_terminal(worktree_id: String) -> Result<(), SerenadeError> {
     let path = worktree_path_for(&worktree_id)?;
     local::open_terminal(&path)
+}
+
+// ---------------------------------------------------------------------------
+// Supervisor chat
+// ---------------------------------------------------------------------------
+
+/// Chat with the headless fleet supervisor. The first turn injects the
+/// `hand session start` contract plus live fleet state; later turns continue
+/// the opencode session (which also reads the fleet's AGENTS.md from cwd).
+#[tauri::command]
+async fn supervisor_chat(message: String) -> Result<supervisor::SupervisorReply, SerenadeError> {
+    let (config, runner, files) = setup()?;
+    let ctx = CTX.get().expect("ctx");
+    let msg = message.trim();
+    if msg.is_empty() {
+        return Err(SerenadeError::new(
+            Code::CommandFailed,
+            "Empty message",
+            "The supervisor message must not be empty.",
+        ));
+    }
+
+    let session_id = ctx.supervisor_session.lock().expect("supervisor session").clone();
+    let prompt = if session_id.is_none() {
+        // First turn: hand's supervisor contract + live fleet snapshot.
+        let session_doc = runner.expect(&["session", "start"], 20)?;
+        let fleet = fleet_status_cached(&runner)?;
+        let fleet_json = serde_json::to_string(&*fleet).unwrap_or_else(|_| "{}".into());
+        let projects_json = runner.expect(&["project", "list", "--json"], 15)?;
+        supervisor::build_first_turn_prompt(&session_doc, &fleet_json, &projects_json, msg)
+    } else {
+        msg.to_string()
+    };
+
+    let (session, text) = supervisor::run_supervisor_turn(
+        &prompt,
+        session_id.as_deref(),
+        &files.home,
+    )?;
+    if let Some(id) = session {
+        *ctx.supervisor_session.lock().expect("supervisor session") = Some(id);
+    }
+    let _ = config;
+    Ok(supervisor::SupervisorReply { text })
+}
+
+/// Forget the supervisor session; the next chat message starts fresh.
+#[tauri::command]
+async fn supervisor_reset() -> Result<(), SerenadeError> {
+    let ctx = CTX.get().expect("ctx");
+    *ctx.supervisor_session.lock().expect("supervisor session") = None;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -923,6 +1029,7 @@ pub fn run() {
                 config: ConfigStore::new(data_dir),
                 fleet_cache: Mutex::new(None),
                 git_cache: Mutex::new(HashMap::new()),
+                supervisor_session: Mutex::new(None),
             });
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -959,6 +1066,8 @@ pub fn run() {
             worktree_open_editor,
             worktree_open_folder,
             worktree_open_terminal,
+            supervisor_chat,
+            supervisor_reset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

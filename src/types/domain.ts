@@ -218,6 +218,10 @@ export interface LogChunkResponse {
   nextCursor?: string;
 }
 
+export interface SupervisorReply {
+  text: string;
+}
+
 export interface CreateTaskInput {
   projectId: string;
   title: string;

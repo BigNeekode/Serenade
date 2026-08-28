@@ -64,12 +64,14 @@ impl FleetFiles {
     }
 
     /// Write the brief. Fails if the task already has one (precondition-style).
+    /// `execution_class` is accepted for API symmetry but intentionally not
+    /// written (see comment at the body below).
     pub fn write_brief(
         &self,
         task_id: &str,
         title: &str,
         description: Option<&str>,
-        execution_class: &str,
+        _execution_class: &str,
         tags: &[String],
     ) -> Result<(), SerenadeError> {
         if !valid_task_id(task_id) {
@@ -88,13 +90,13 @@ impl FleetFiles {
             )
             .with_action("Choose a different title, or reopen the existing task."));
         }
+        // No execution_class front-matter: a brief that declares an execution
+        // class makes `hand spawn` require a configured route profile
+        // ("route <kind>.<class> is not configured"). Omitting it lets spawn
+        // fall back to the fleet's configured default harness (legacy routing),
+        // which is what the GUI offers. Profiles/routes can be used later by
+        // passing --profile at spawn.
         let mut body = String::new();
-        if !execution_class.is_empty() {
-            // Optional front-matter block understood by hand's brief parser.
-            body.push_str("---\n");
-            body.push_str(format!("execution_class: {execution_class}\n").as_str());
-            body.push_str("---\n\n");
-        }
         body.push_str(&format!("# {title}\n\n"));
         if let Some(desc) = description {
             body.push_str(desc.trim());

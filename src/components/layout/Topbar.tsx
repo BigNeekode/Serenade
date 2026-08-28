@@ -22,6 +22,7 @@ function useBreadcrumbs() {
 
   const root = segments[0];
   const rootLabels: Record<string, string> = {
+    supervisor: "Supervisor",
     projects: "Projects",
     tasks: "Tasks",
     agents: "Agents",

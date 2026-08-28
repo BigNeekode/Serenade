@@ -16,6 +16,7 @@ pub fn derive_task_status(s: &StatusJson, held: bool) -> &'static str {
     let open = s.task_lifecycle.as_deref().unwrap_or("open") == "open";
     let merged = s.merged.unwrap_or(false);
     let delivered = s.delivered_at.is_some();
+    let agent_state = s.agent_state.as_deref().unwrap_or("unknown");
 
     if open {
         if held || matches!(reported, "blocked" | "needs-decision") {
@@ -28,6 +29,11 @@ pub fn derive_task_status(s: &StatusJson, held: bool) -> &'static str {
             return "failed";
         }
         if matches!(attempt, "provisioning" | "running") {
+            // The harness finished its turn (herdr: done) but no report line
+            // arrived — work is sitting in the worktree awaiting the operator.
+            if agent_state == "done" {
+                return "review";
+            }
             return if s.kind == "scout" { "scouting" } else { "in_progress" };
         }
         if matches!(reported, "done") {

@@ -14,6 +14,7 @@ import type {
   Provider,
   Report,
   RouteRule,
+  SupervisorReply,
   Task,
   TaskStatus,
   Worktree,
@@ -708,6 +709,21 @@ export class MockSerenadeApi implements SerenadeApi {
   async openWorktree(_worktreeId: string, _target: "editor" | "folder" | "terminal"): Promise<void> {
     await delay();
     // Mock mode: the real implementation shells out to a fixed editor/folder/terminal action.
+  }
+
+  async supervisorChat(message: string): Promise<SupervisorReply> {
+    await delay();
+    return {
+      text: `**(mock supervisor)** Understood: “${message}”. In mock mode I can't run a real model — inside the Tauri app this chat hosts a headless opencode supervisor with your fleet's live state. Here's a sample proposal:
+
+\`\`\`tasks
+[{"title": "Sample: survey the repository", "project": "atlas-api", "kind": "scout", "executionClass": "standard", "description": "Produce an orientation report for the repo.", "tags": ["mock"]}]
+\`\`\``,
+    };
+  }
+
+  async supervisorReset(): Promise<void> {
+    await delay();
   }
 }
 

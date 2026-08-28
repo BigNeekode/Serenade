@@ -2,6 +2,7 @@ import { NavLink } from "react-router-dom";
 import clsx from "clsx";
 import {
   LayoutDashboard,
+  BrainCircuit,
   FolderGit2,
   KanbanSquare,
   Bot,
@@ -17,6 +18,7 @@ import { useUiStore } from "@/state/ui-store";
 
 const items = [
   { to: "/", label: "Overview", icon: LayoutDashboard, end: true },
+  { to: "/supervisor", label: "Supervisor", icon: BrainCircuit, end: false },
   { to: "/projects", label: "Projects", icon: FolderGit2, end: false },
   { to: "/tasks", label: "Tasks", icon: KanbanSquare, end: false },
   { to: "/agents", label: "Agents", icon: Bot, end: false },

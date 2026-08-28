@@ -11,12 +11,14 @@ import { ReportsPage } from "@/features/reports/ReportsPage";
 import { ReportViewerPage } from "@/features/reports/ReportViewerPage";
 import { RoutesPage } from "@/features/routes/RoutesPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
+import { SupervisorPage } from "@/features/supervisor/SupervisorPage";
 
 export function Router() {
   return (
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<OverviewPage />} />
+        <Route path="supervisor" element={<SupervisorPage />} />
         <Route path="projects" element={<ProjectsPage />} />
         <Route path="projects/:projectId" element={<ProjectDashboardPage />} />
         <Route path="tasks" element={<TasksPage />} />

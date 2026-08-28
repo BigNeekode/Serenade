@@ -12,6 +12,7 @@ import type {
   Provider,
   Report,
   RouteRule,
+  SupervisorReply,
   Task,
   Worktree,
 } from "@/types/domain";
@@ -104,5 +105,12 @@ export class TauriSerenadeApi implements SerenadeApi {
     target: "editor" | "folder" | "terminal",
   ): Promise<void> {
     return invoke(`worktree_open_${target}`, { worktreeId });
+  }
+
+  async supervisorChat(message: string): Promise<SupervisorReply> {
+    return invoke("supervisor_chat", { message });
+  }
+  async supervisorReset(): Promise<void> {
+    return invoke("supervisor_reset");
   }
 }

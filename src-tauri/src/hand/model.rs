@@ -2,9 +2,9 @@
 //! emits them (see docs/hand-integration-notes.md §2). Enums are kept as
 //! strings for forward compatibility with newer hand versions.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct FleetJson {
     pub task_count: i64,
@@ -12,7 +12,7 @@ pub struct FleetJson {
     pub holds: Vec<HoldJson>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct StatusJson {
     pub id: String,
@@ -48,7 +48,7 @@ pub struct StatusJson {
     pub latest_send: Option<SendJson>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct HerdrRef {
     pub session: String,
@@ -57,14 +57,14 @@ pub struct HerdrRef {
     pub pane_id: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct ReportedJson {
     pub state: String,
     pub note: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct HoldJson {
     pub id: String,
@@ -76,7 +76,7 @@ pub struct HoldJson {
     pub inconsistent: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct AttemptJson {
     pub ordinal: i64,
@@ -89,7 +89,7 @@ pub struct AttemptJson {
     pub worktree: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct SendJson {
     pub id: i64,
@@ -104,7 +104,7 @@ pub struct SendJson {
     pub retry_safe: Option<bool>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct ProjectJson {
     pub name: String,

@@ -11,6 +11,7 @@ import type {
   Provider,
   Report,
   RouteRule,
+  SupervisorReply,
   Task,
   Worktree,
 } from "@/types/domain";
@@ -51,4 +52,8 @@ export interface SerenadeApi {
   // Local tooling
   cleanupWorktree(worktreeId: string): Promise<void>;
   openWorktree(worktreeId: string, target: "editor" | "folder" | "terminal"): Promise<void>;
+
+  // Supervisor chat
+  supervisorChat(message: string): Promise<SupervisorReply>;
+  supervisorReset(): Promise<void>;
 }

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MockSerenadeApi } from "@/lib/api/mock";
@@ -38,9 +38,11 @@ describe("Fleet Overview", () => {
     expect(screen.getByText("Failed Tasks")).toBeInTheDocument();
     expect(screen.getByText("Success Rate")).toBeInTheDocument();
 
-    // mock fleet: 2 failed tasks (t_1047, t_1060)
-    const failedStat = document.querySelector('[data-stat="failed-tasks"]');
-    expect(failedStat).toHaveTextContent("2");
+    // mock fleet: 2 failed tasks (t_1047, t_1060) — wait for the stat to fill in
+    await waitFor(() => {
+      const failedStat = document.querySelector('[data-stat="failed-tasks"]');
+      expect(failedStat).toHaveTextContent("2");
+    });
   });
 
   it("flags stale worker heartbeats as a warning", async () => {
