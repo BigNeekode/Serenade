@@ -3,7 +3,7 @@
 > **Purpose:** Track Serenade's adaptation to Secondhand / `hand` 0.8 without coupling the GUI to unfinished Hand internals.
 >
 > **Last reviewed:** 2026-08-29
-> **Current Serenade baseline:** real Hand 0.6.0 integration
+> **Current Serenade baseline:** real Hand 0.6.0 integration + 0.8-safe alignment work on `feat/hand-0.8-alignment`
 > **Hand 0.8 status:** architecture/spec work in progress; do not implement unfinished v19 persistence details in Serenade.
 
 ---
@@ -91,7 +91,7 @@ These are not necessarily bugs against Hand 0.6; they are areas that must change
 
 ### S08-M01 — Supervisor context is manually assembled
 
-Current Serenade Supervisor builds its own first-turn context from:
+Current Serenade Supervisor originally built its own first-turn context from:
 
 ```text
 hand session start
@@ -113,7 +113,7 @@ every reasoning turn
 → reason
 ```
 
-**Required change:** chat history remains UX context only; fresh Hand orientation becomes authoritative Fleet context every reasoning turn.
+**Current branch progress:** the Supervisor prompt no longer consumes Serenade's private fleet/project JSON as authoritative context. Each provider turn now attempts `hand orient`; Hand 0.6 falls back to its older `hand session start` context. The caller still computes the legacy JSON and the direct refresh currently assumes `hand` is on PATH, so this mismatch is only partially retired.
 
 ### S08-M02 — Serenade derives/normalizes lifecycle-like UI state
 
@@ -135,7 +135,7 @@ WorkerReport Claim
 
 Current Rust integration knows Hand-specific JSON/file conventions and maps them directly to Serenade domain objects.
 
-**Required change:** introduce an explicit versioned Hand integration boundary so 0.8 can replace the adapter without rebuilding the React application.
+**Current branch progress:** a frontend `HandGateway` seam now centralizes version/compatibility policy and mutation gating. The Rust read/mutation implementation is still the legacy adapter and must eventually move behind the same explicit gateway boundary.
 
 ### S08-M04 — Task-centric UI hides future Plan/Attempt lineage
 
@@ -155,29 +155,38 @@ These tasks are intentionally limited to boundaries and UX architecture that rem
 
 ### Architecture
 
-- [ ] **S08-001 — Introduce a versioned `HandGateway` boundary**
-  - Keep React dependent on Serenade domain/API contracts, not Hand CLI syntax.
-  - Keep the existing 0.6/0.7 adapter working.
-  - Reserve a separate 0.8 adapter implementation.
+- [~] **S08-001 — Introduce a versioned `HandGateway` boundary**
+  - [x] Add a dedicated Hand compatibility/gateway seam outside React features.
+  - [x] Keep React dependent on Serenade domain/API contracts, not Hand CLI syntax.
+  - [x] Keep the existing 0.6/0.7 adapter working.
+  - [ ] Move Rust Hand reads/mutations fully behind a gateway/adapter interface.
+  - [ ] Reserve/implement the separate released 0.8 adapter once its public contract is stable.
   - Do not expose Hand's SQLite schema directly to the frontend.
 
-- [ ] **S08-002 — Add Hand compatibility/version negotiation**
-  - Probe `hand --version` at startup.
-  - Represent supported / compatibility-warning / unsupported modes.
-  - Gate unsafe mutations when the Hand contract is unknown.
+- [~] **S08-002 — Add Hand compatibility/version negotiation**
+  - [x] Reuse the startup `hand --version` probe exposed by environment validation.
+  - [x] Classify `legacy-0.6`, `transition-0.7`, `v0.8-unadapted`, and unknown contracts.
+  - [x] Surface compatibility + mutation state in Settings/Diagnostics.
+  - [x] Fail closed for workflow mutations in the Tauri API adapter when the Hand contract is unknown/0.8-unadapted.
+  - [x] Add unit tests for compatibility classification.
+  - [ ] Duplicate/enforce the compatibility guard in the Rust mutation boundary so direct Tauri command invocation cannot bypass it.
   - Keep read-only diagnostics available where safe.
 
 ### Supervisor
 
-- [ ] **S08-010 — Align Supervisor lifecycle with Hand**
-  - `hand session start` once for a new actual Supervisor runtime.
-  - `hand orient` before every reasoning turn.
-  - `hand orient` again after autonomous wake/re-entry before reasoning/action.
-  - Treat provider session/conversation IDs as ephemeral runtime mechanics only.
+- [~] **S08-010 — Align Supervisor lifecycle with Hand**
+  - [x] Preserve the existing first-runtime `hand session start` bootstrap path.
+  - [x] Refresh `hand orient` immediately before every reasoning turn when available.
+  - [x] Fall back to per-turn `hand session start` for legacy Hand 0.6 where `orient` does not exist.
+  - [x] Treat provider session/conversation IDs as ephemeral runtime mechanics only in code/docs.
+  - [ ] Route the per-turn refresh through the configured Rust Hand runner rather than assuming `hand` on PATH.
+  - [ ] Cover autonomous wake/re-entry when Serenade gains a qualified wake path.
 
-- [ ] **S08-011 — Stop constructing private Fleet truth for the Supervisor**
-  - Remove dependence on manually concatenated `hand status`/project state as authoritative reasoning context once `SupervisorOrientation` is available.
-  - Keep bounded prompt/UI history only for conversational convenience.
+- [~] **S08-011 — Stop constructing private Fleet truth for the Supervisor**
+  - [x] Stop injecting manually concatenated fleet/project JSON into the Supervisor prompt as authoritative truth.
+  - [x] Prefix each reasoning turn with fresh Hand-owned context.
+  - [x] State explicitly that chat history/provider session identity is not workflow truth.
+  - [ ] Remove now-wasted legacy `hand status` / project JSON assembly from the Tauri caller after its Rust gateway refactor.
   - A reset/restart of the Supervisor must lose zero canonical Fleet truth.
 
 - [ ] **S08-012 — Make Supervisor Harness configurable/provider-neutral**
@@ -254,7 +263,21 @@ These tasks are intentionally limited to boundaries and UX architecture that rem
 
 ## 6. Proposed Serenade integration shape
 
-Conceptual only; names may change during implementation.
+Current transition shape:
+
+```text
+React features
+      ↓
+SerenadeApi
+      ↓
+TauriSerenadeApi
+      ↓
+HandGateway (compatibility + fail-closed policy)
+      ↓
+legacy Rust Hand integration
+```
+
+Target shape:
 
 ```text
 React features
@@ -331,7 +354,7 @@ Then record:
 
 ### Update log
 
-Append one entry below for every meaningful upstream review.
+Append one entry below for every meaningful upstream review or Serenade alignment implementation slice.
 
 ---
 
@@ -353,4 +376,32 @@ Append one entry below for every meaningful upstream review.
 - Plan first-class Attention UI.
 - Keep Herdr/Treehouse/session-provider mechanics below Serenade.
 
-**Next checkpoint:** re-review when Hand 0.7 releases or when `#344/#339` materially changes/locks.
+### 2026-08-29 — First implementation slice (`feat/hand-0.8-alignment`)
+
+**Implemented:**
+
+- Added `src/lib/hand/compatibility.ts` with explicit Hand contract classification.
+- Added `src/lib/hand/gateway.ts` as the first versioned integration seam.
+- Tauri API workflow mutations now fail closed for unknown or unadapted Hand contracts.
+- Settings shows detected Hand contract and whether workflow mutations are enabled.
+- Added compatibility unit tests.
+- Supervisor first-turn prompt no longer consumes manually assembled fleet/project JSON as workflow truth.
+- Every Supervisor reasoning turn now receives a fresh Hand context: `hand orient` when available, legacy `hand session start` fallback for 0.6.
+- Provider conversation/session IDs are documented as ephemeral runtime mechanics only.
+
+**Known transition debt:**
+
+- Mutation compatibility must also be enforced inside the Rust command boundary.
+- Supervisor refresh currently invokes `hand` from PATH instead of the configured `HandRunner` binary.
+- Tauri caller still computes legacy fleet/project JSON even though the Supervisor prompt ignores it.
+- OpenCode is still hardcoded as the Supervisor Harness.
+- Report/observation/lifecycle flattening remains to be refactored.
+
+**Next implementation candidates that do not require v19 schema:**
+
+1. Rust-side compatibility gate + explicit legacy gateway wrapper.
+2. Move Supervisor refresh through that configured gateway and remove wasted JSON assembly.
+3. Split reasoning interaction from exact typed actions at the Serenade API boundary.
+4. Begin non-authoritative Task → Plan → Attempt presentation types with unavailable legacy fields rather than guessed data.
+
+**Next upstream checkpoint:** Hand 0.7 release or material `#344/#339` lock/implementation change.
