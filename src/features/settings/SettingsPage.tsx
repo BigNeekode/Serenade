@@ -11,6 +11,7 @@ import {
   useEnvironment,
   useDiagnostics,
 } from "@/hooks/use-config";
+import { compatibilityFromEnvironment } from "@/lib/hand/compatibility";
 import type { AppConfig } from "@/types/domain";
 
 export function SettingsPage() {
@@ -26,6 +27,7 @@ export function SettingsPage() {
   const cfg = config.data;
   const effectiveHandPath = handPath ?? cfg?.handBinaryPath ?? "";
   const effectiveFleetPath = fleetPath ?? cfg?.fleetPath ?? "";
+  const handCompatibility = env.data ? compatibilityFromEnvironment(env.data) : undefined;
 
   const save = async (input: Partial<AppConfig>, label: string) => {
     try {
@@ -44,6 +46,7 @@ export function SettingsPage() {
         mode: diagnostics.data?.mode,
         handPath: diagnostics.data?.handPath,
         handVersion: diagnostics.data?.handVersion,
+        handCompatibility,
         fleetPath: diagnostics.data?.fleetPath,
         fleetValid: diagnostics.data?.fleetValid,
         capabilities: diagnostics.data?.capabilities,
@@ -92,6 +95,19 @@ export function SettingsPage() {
             <div className="space-y-1.5 rounded-lg bg-surface p-3">
               {statusRow(env.data?.handFound, env.data?.handFound ? `hand found (${env.data.handVersion})` : "hand not found")}
               {statusRow(env.data?.fleetValid, env.data?.fleetValid ? "fleet valid" : "fleet missing or invalid")}
+              {handCompatibility && (
+                <p
+                  className={`pl-5 text-[11px] ${
+                    handCompatibility.mode === "supported"
+                      ? "text-success"
+                      : handCompatibility.mode === "warning"
+                        ? "text-warning"
+                        : "text-danger"
+                  }`}
+                >
+                  Hand contract: {handCompatibility.contract} · {handCompatibility.reason}
+                </p>
+              )}
               {env.data?.issues.map((issue) => (
                 <p key={issue} className="pl-5 text-[11px] text-warning">
                   {issue}
@@ -111,7 +127,7 @@ export function SettingsPage() {
               Save & validate
             </Button>
             <p className="text-[10px] leading-relaxed text-fg-subtle">
-              Clearing both paths and saving simulates first-run and shows the setup screen.
+              Unknown/new Hand contracts remain available for diagnostics, but workflow mutations are blocked until the adapter is verified.
             </p>
           </div>
         </Card>
@@ -135,7 +151,7 @@ export function SettingsPage() {
                 <Input
                   value={cfg.customEditorPath ?? ""}
                   onChange={(e) => setCustomPath(e.target.value)}
-                  placeholder="C:\tools\my-editor\editor.exe"
+                  placeholder="C:\\tools\\my-editor\\editor.exe"
                 />
               </Field>
             )}
@@ -216,6 +232,11 @@ export function SettingsPage() {
             <Row label="Mode" value={diagnostics.data?.mode ?? "…"} />
             <Row label="hand path" value={diagnostics.data?.handPath ?? "—"} mono />
             <Row label="hand version" value={diagnostics.data?.handVersion ?? "—"} />
+            <Row label="Hand contract" value={handCompatibility?.contract ?? "—"} />
+            <Row
+              label="Workflow mutations"
+              value={handCompatibility ? (handCompatibility.mutationsAllowed ? "enabled" : "blocked") : "—"}
+            />
             <Row label="Fleet path" value={diagnostics.data?.fleetPath ?? "—"} mono />
             <Row label="Fleet valid" value={diagnostics.data?.fleetValid == null ? "—" : String(diagnostics.data.fleetValid)} />
             {Object.entries(diagnostics.data?.capabilities ?? {}).map(([cap, supported]) => (
