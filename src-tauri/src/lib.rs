@@ -352,13 +352,14 @@ async fn agents_list() -> Result<Vec<AgentRun>, SerenadeError> {
             for a in attempts {
                 let mut run = agent_from_attempt(s, a);
                 if a.ordinal == active_ordinal {
-                    // enrich with the live agent_state classification
+                    // Provider activity enriches presentation only. In
+                    // particular, provider/agent `done` while the Attempt is
+                    // still running means waiting, not lifecycle completion.
                     if a.lifecycle == "running" {
                         run.status = match s.agent_state.as_deref().unwrap_or("unknown") {
                             "working" => "running".into(),
-                            "idle" => "waiting".into(),
+                            "idle" | "done" => "waiting".into(),
                             "blocked" => "blocked".into(),
-                            "done" => "completed".into(),
                             other => other.to_string(),
                         };
                     }
@@ -816,6 +817,7 @@ async fn task_create(input: serde_json::Value) -> Result<Task, SerenadeError> {
             SerenadeError::new(Code::CommandFailed, "Invalid task input", e.to_string())
         })?;
     let (_, runner, files) = setup()?;
+    runner.assert_workflow_mutation_compatible()?;
 
     let title = parsed.title.trim();
     if title.len() < 3 {
@@ -867,6 +869,7 @@ async fn task_create(input: serde_json::Value) -> Result<Task, SerenadeError> {
 #[tauri::command]
 async fn task_send_message(task_id: String, message: String) -> Result<(), SerenadeError> {
     let (_, runner, _) = setup()?;
+    runner.assert_workflow_mutation_compatible()?;
     let msg = message.trim();
     if msg.is_empty() {
         return Err(SerenadeError::new(
@@ -885,6 +888,7 @@ async fn task_send_message(task_id: String, message: String) -> Result<(), Seren
 #[tauri::command]
 async fn task_retry(task_id: String) -> Result<(), SerenadeError> {
     let (_, runner, _) = setup()?;
+    runner.assert_workflow_mutation_compatible()?;
     runner.expect(&["reopen", &task_id], 180)?;
     invalidate_fleet_cache();
     Ok(())
@@ -893,6 +897,7 @@ async fn task_retry(task_id: String) -> Result<(), SerenadeError> {
 #[tauri::command]
 async fn task_stop(task_id: String) -> Result<(), SerenadeError> {
     let (_, runner, _) = setup()?;
+    runner.assert_workflow_mutation_compatible()?;
     // Destructive: the UI must confirm before invoking (architecture.md §21).
     runner.expect(&["teardown", &task_id, "--force"], 120)?;
     invalidate_fleet_cache();
@@ -902,6 +907,7 @@ async fn task_stop(task_id: String) -> Result<(), SerenadeError> {
 #[tauri::command]
 async fn task_promote(task_id: String) -> Result<Task, SerenadeError> {
     let (_, runner, files) = setup()?;
+    runner.assert_workflow_mutation_compatible()?;
     runner.expect(&["promote", &task_id], 180)?;
     invalidate_fleet_cache();
     let s = task_status(&runner, &task_id)?;
@@ -911,6 +917,7 @@ async fn task_promote(task_id: String) -> Result<Task, SerenadeError> {
 #[tauri::command]
 async fn worktree_cleanup(worktree_id: String) -> Result<(), SerenadeError> {
     let (_, runner, _) = setup()?;
+    runner.assert_workflow_mutation_compatible()?;
     // worktree_id == task id in this adapter. teardown without --force:
     // hand refuses when unlanded work exists, which is the safety we want.
     runner.expect(&["teardown", &worktree_id], 120)?;
@@ -970,8 +977,8 @@ async fn worktree_open_terminal(worktree_id: String) -> Result<(), SerenadeError
 /// Chat with the headless fleet supervisor. Sessions are scoped: one for the
 /// whole fleet (`project_id: None`) and one per registered project. A
 /// project-scoped supervisor runs with cwd at the project clone, so the agent
-/// can read that repository; the first turn injects the `hand session start`
-/// contract plus live state either way.
+/// can read that repository. Serenade supplies only a bootstrap compatibility
+/// hint; the actual Supervisor Harness must orient itself every reasoning turn.
 #[tauri::command]
 async fn supervisor_chat(
     message: String,
@@ -1021,13 +1028,10 @@ async fn supervisor_chat(
         .cloned();
     let prompt = if session_id.is_none() {
         let session_doc = runner.expect(&["session", "start"], 20)?;
-        let fleet = fleet_status_cached(&runner)?;
-        let fleet_json = serde_json::to_string(&*fleet).unwrap_or_else(|_| "{}".into());
-        let projects_json = runner.expect(&["project", "list", "--json"], 15)?;
         supervisor::build_first_turn_prompt(
             &session_doc,
-            &fleet_json,
-            &projects_json,
+            "",
+            "",
             msg,
             project_id.as_deref(),
         )
