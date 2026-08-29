@@ -18,6 +18,12 @@ export function TaskDetailPanel({ taskId }: { taskId: string }) {
   const t = task.data;
   const plan = t.lineage?.plan;
   const attempt = t.lineage?.activeAttempt;
+  const lineageLabel =
+    t.lineage?.source === "canonical"
+      ? "canonical"
+      : t.lineage?.source === "legacy"
+        ? "legacy projection"
+        : "not exposed";
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -53,9 +59,7 @@ export function TaskDetailPanel({ taskId }: { taskId: string }) {
       <div className="rounded-lg border border-line bg-panel p-3 text-xs">
         <div className="mb-2 flex items-center justify-between gap-3">
           <p className="text-[10px] font-semibold uppercase tracking-wide text-fg-subtle">Lineage</p>
-          <span className="text-[10px] text-fg-subtle">
-            {t.lineage?.source === "canonical" ? "canonical" : "legacy projection"}
-          </span>
+          <span className="text-[10px] text-fg-subtle">{lineageLabel}</span>
         </div>
         <div className="grid gap-y-1.5">
           <div className="flex justify-between gap-3">
@@ -67,7 +71,9 @@ export function TaskDetailPanel({ taskId }: { taskId: string }) {
             {plan ? (
               <span className="font-mono text-[11px] text-fg-muted">{plan.id}</span>
             ) : (
-              <span className="text-right text-fg-subtle">unavailable on legacy Hand</span>
+              <span className="text-right text-fg-subtle">
+                {t.lineage?.source === "legacy" ? "unavailable on legacy Hand" : "not exposed"}
+              </span>
             )}
           </div>
           <div className="flex justify-between gap-3">
@@ -90,7 +96,7 @@ export function TaskDetailPanel({ taskId }: { taskId: string }) {
             </div>
           )}
         </div>
-        {!plan && (
+        {t.lineage?.source === "legacy" && !plan && (
           <p className="mt-2 border-t border-line pt-2 text-[10px] leading-relaxed text-fg-subtle">
             Serenade does not infer a Plan from the legacy brief/task fields. Hand 0.8 can fill this slot when its canonical Plan projection is released.
           </p>
