@@ -3,11 +3,12 @@
 //! Serenade is presentation + interaction, not a competing source of Fleet
 //! truth. A provider conversation is therefore only ephemeral UX/runtime state.
 //! Serenade performs a best-effort read-only preflight before each turn through
-//! the configured Hand runner, while the actual Supervisor Harness is instructed
+//! the configured Hand gateway, while the actual Supervisor Harness is instructed
 //! to follow Hand's own runtime contract (`session start` once for a new runtime,
 //! `orient` every turn).
 
 use crate::error::{Code, SerenadeError};
+use crate::hand::gateway::HandLegacyGateway;
 use serde::Serialize;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -65,28 +66,15 @@ fn truncate(s: String, budget: usize) -> String {
     }
 }
 
-/// Best-effort read of one Hand context command in the supervisor cwd.
-///
-/// This uses the same configured binary and HAND_HOME as every other Serenade
-/// Hand call. It is deliberately read-only and is only a preflight/context hint;
-/// it does not replace the actual Supervisor Harness's obligation to orient.
-fn read_hand_context(cwd: &PathBuf, args: &[&str]) -> Option<String> {
-    let (_, runner, _) = crate::setup().ok()?;
-    let text = runner.expect_in(args, 20, cwd).ok()?.trim().to_string();
-    (!text.is_empty()).then_some(text)
-}
-
-/// Refresh current Hand-owned context as a presentation-side preflight.
-///
-/// 0.7+ owns the `session start once -> orient every turn` split. Hand 0.6 did
-/// not yet expose `orient`, so its older `session start` command remains the
-/// compatibility fallback and is intentionally re-read every turn.
+/// Refresh current Hand-owned context as a presentation-side preflight through
+/// the configured legacy gateway. The fallback command details live in the
+/// adapter rather than in Supervisor presentation code.
 fn fresh_hand_context(cwd: &PathBuf) -> Option<(&'static str, String)> {
-    if let Some(orientation) = read_hand_context(cwd, &["orient"]) {
-        return Some(("hand orient", orientation));
-    }
-    read_hand_context(cwd, &["session", "start"])
-        .map(|context| ("hand session start (legacy fallback)", context))
+    let (_, runner, _) = crate::setup().ok()?;
+    let gateway = HandLegacyGateway::new(runner);
+    gateway
+        .fresh_supervisor_context(cwd)
+        .map(|(source, context)| (source.label(), context))
 }
 
 /// First-turn conversation framing. `fleet_json` and `projects_json` are kept in
@@ -163,7 +151,7 @@ pub fn run_supervisor_turn(
         ),
         None => format!(
             "=== SUPERVISOR RUNTIME REQUIREMENT ===\n{runtime_instruction}\n\n\
-             Serenade could not refresh Hand through the configured runner, so do not rely on presentation-side context.\n\n\
+             Serenade could not refresh Hand through the configured gateway, so do not rely on presentation-side context.\n\n\
              === SERENADE TURN ===\n{message}"
         ),
     };
