@@ -51,7 +51,7 @@ function ToolCard({
         {tool.suggestedAction && <div className="text-fg-subtle">{tool.suggestedAction}</div>}
       </div>
       <div className="mt-2 flex flex-wrap gap-2">
-        {onInstall && (tool.state === "missing" || tool.state === "incompatible") && (
+        {onInstall && (tool.state === "missing" || tool.state === "incompatible" || tool.state === "unhealthy") && (
           <Button variant="secondary" size="xs" onClick={onInstall}>
             Install / Reinstall
           </Button>
@@ -73,27 +73,31 @@ export function EnvironmentSection({ onRevalidate }: { onRevalidate: () => void 
   const toast = useToast();
   const [customPath, setCustomPath] = useState("");
   const [showCustomPath, setShowCustomPath] = useState(false);
-  const [installing, setInstalling] = useState(false);
+  const [installing, setInstalling] = useState<string | null>(null);
 
   const data = env.data;
   const compatibility = data ? compatibilityFromEnvironment(data) : undefined;
 
   const handleRescan = () => onRevalidate();
 
-  const handleInstallManagedHand = async () => {
-    setInstalling(true);
+  const handleInstall = async (toolId: string, label: string) => {
+    setInstalling(toolId);
     try {
-      const result = await api.installManagedHand();
-      toast.showToast({ variant: "success", title: "Hand installed", description: result });
+      let result: string;
+      if (toolId === "hand") result = await api.installManagedHand();
+      else if (toolId === "treehouse") result = await api.installTreehouse();
+      else if (toolId === "herdr") result = await api.installHerdr();
+      else throw new Error(`No installer for ${toolId}`);
+      toast.showToast({ variant: "success", title: `${label} installed`, description: result });
       onRevalidate();
     } catch (err) {
       toast.showToast({
         variant: "error",
-        title: "Managed Hand installation failed",
+        title: `${label} installation failed`,
         description: toAppError(err).message,
       });
     } finally {
-      setInstalling(false);
+      setInstalling(null);
     }
   };
 
@@ -130,7 +134,11 @@ export function EnvironmentSection({ onRevalidate }: { onRevalidate: () => void 
           <ToolCard
             key={tool.id}
             tool={tool}
-            onInstall={tool.id === "hand" ? handleInstallManagedHand : undefined}
+            onInstall={
+              ["hand", "treehouse", "herdr"].includes(tool.id)
+                ? () => handleInstall(tool.id, tool.label)
+                : undefined
+            }
             onCustomPath={tool.id === "hand" ? () => setShowCustomPath((s) => !s) : undefined}
           />
         ))}
@@ -189,7 +197,7 @@ export function EnvironmentSection({ onRevalidate }: { onRevalidate: () => void 
         {installing && (
           <div className="flex items-center gap-2 text-[11px] text-fg-muted">
             <Loader2 size={12} className="animate-spin" />
-            Installing managed Hand…
+            Installing {installing}…
           </div>
         )}
       </div>

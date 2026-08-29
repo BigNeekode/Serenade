@@ -89,10 +89,12 @@ For the packaged Serenade application you need:
 | Windows 10/11 (x86_64) | First supported platform for Quick Setup |
 | [Git](https://git-scm.com) | Project clones and worktree metadata (detect-only; install manually if missing) |
 | [Secondhand (`hand`)](https://github.com/atqamz/hand) **0.6.x** | Current verified fleet/task integration |
+| [Treehouse](https://github.com/kunchenguid/treehouse) | Git worktree pool Hand 0.6 uses to isolate workers |
+| [Herdr](https://github.com/herdrdev/herdr) | Terminal runtime Hand 0.6 uses to host worker panes |
 | At least one Hand-supported coding harness | Worker execution through Hand profiles/routes |
 | [OpenCode](https://opencode.ai) | **Optional** — only for Serenade Supervisor chat |
 
-Serenade can install a qualified `hand` 0.6.x binary for you under its own application-data directory. It does not require Node.js, Rust, or changes to your global `PATH`.
+Serenade's Quick Setup can install a qualified `hand` 0.6.x binary into its own application-data directory, and install Treehouse + Herdr through their official bootstrap installers. None of these require Node.js, Rust, or manual `PATH` edits.
 
 ### Build-from-source requirements
 
@@ -149,7 +151,7 @@ On first launch Serenade opens a **Quick Setup** wizard if it has not been compl
 2. **Environment Check** — read-only scan for Git, Hand, Fleet, and Supervisor Harness.
 3. **Fleet Location** — choose where your Fleet home lives (default: `%USERPROFILE%\Serenade\fleet`).
 4. **Setup Plan** — preview what Serenade will do before any download or installation.
-5. **Prepare Environment** — Serenade downloads and installs a qualified Hand 0.6.x release asset, verifies its checksum, and initializes the Fleet through `hand init`.
+5. **Prepare Environment** — Serenade installs a qualified Hand 0.6.x release asset (checksum-verified), installs the Treehouse and Herdr runtime tools Hand 0.6 depends on, then initializes the Fleet through `hand init`.
 6. **Supervisor (optional)** — detect or skip OpenCode setup.
 7. **First Project** — register a remote Git repository by URL.
 8. **Ready** — enter the main Serenade UI.

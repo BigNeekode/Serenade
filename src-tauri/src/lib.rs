@@ -9,6 +9,7 @@ mod git;
 mod hand;
 mod installer;
 mod local;
+mod runtime_tools;
 mod supervisor;
 
 use crate::config::{AppConfig, ConfigStore};
@@ -179,6 +180,20 @@ async fn install_managed_hand() -> Result<String, SerenadeError> {
         .update(serde_json::json!({ "handBinaryPath": path }))
         .map_err(|e| SerenadeError::new(Code::CommandFailed, "Could not save config", e))?;
     Ok(path)
+}
+
+#[tauri::command]
+async fn install_treehouse() -> Result<String, SerenadeError> {
+    tauri::async_runtime::spawn_blocking(runtime_tools::install_treehouse)
+        .await
+        .map_err(|e| SerenadeError::new(Code::InstallFailed, "Installer task failed", e.to_string()))?
+}
+
+#[tauri::command]
+async fn install_herdr() -> Result<String, SerenadeError> {
+    tauri::async_runtime::spawn_blocking(runtime_tools::install_herdr)
+        .await
+        .map_err(|e| SerenadeError::new(Code::InstallFailed, "Installer task failed", e.to_string()))?
 }
 
 #[tauri::command]
@@ -1108,6 +1123,8 @@ pub fn run() {
             environment_validate,
             fleet_init,
             install_managed_hand,
+            install_treehouse,
+            install_herdr,
             diagnostics_get,
             projects_list,
             project_get,

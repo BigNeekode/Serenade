@@ -142,10 +142,12 @@ impl<P: EnvironmentProbes> EnvironmentInspector<P> {
         let platform = self.platform();
         let git = self.scan_git(config);
         let hand = self.scan_hand(config);
+        let treehouse = self.scan_runtime_tool("treehouse", "Treehouse", "treehouse", &["worktree-runtime"]);
+        let herdr = self.scan_runtime_tool("herdr", "Herdr", "herdr", &["terminal-runtime"]);
         let supervisor = self.scan_supervisor(config);
         let fleet = self.scan_fleet(config);
 
-        let tools = vec![git, hand, supervisor];
+        let tools = vec![git, hand, treehouse, herdr, supervisor];
         let ready = tools.iter().all(|t| !t.required || t.state == ToolState::Ready)
             && fleet.state == ToolState::Ready;
 
@@ -406,6 +408,80 @@ impl<P: EnvironmentProbes> EnvironmentInspector<P> {
             },
             suggested_action: None,
             capabilities: vec!["supervisor-chat".to_string()],
+        }
+    }
+
+    /// Known per-tool install locations on Windows (their official installers
+    /// place binaries here, so we can detect them even before a fresh PATH
+    /// takes effect).
+    fn known_locations(&self, id: &str) -> Vec<PathBuf> {
+        if !cfg!(windows) {
+            return Vec::new();
+        }
+        let Some(local) = std::env::var("LOCALAPPDATA").ok().map(PathBuf::from) else {
+            return Vec::new();
+        };
+        match id {
+            "treehouse" => vec![local.join("treehouse").join("treehouse.exe")],
+            "herdr" => vec![local.join("Programs").join("Herdr").join("bin").join("herdr.exe")],
+            _ => Vec::new(),
+        }
+    }
+
+    /// Discover a required runtime tool (treehouse/herdr) from PATH first, then
+    /// from its known install location.
+    fn scan_runtime_tool(
+        &self,
+        id: &str,
+        label: &str,
+        exe_name: &str,
+        capabilities: &[&str],
+    ) -> ToolStatus {
+        let candidate = self
+            .probes
+            .find_executable(exe_name)
+            .map(|path| (ToolOwnership::System, path))
+            .or_else(|| {
+                self.known_locations(id)
+                    .into_iter()
+                    .find(|p| self.probes.is_file(p))
+                    .map(|path| (ToolOwnership::System, path))
+            });
+
+        let Some((ownership, path)) = candidate else {
+            return ToolStatus {
+                id: id.to_string(),
+                label: label.to_string(),
+                required: true,
+                state: ToolState::Missing,
+                ownership: None,
+                path: None,
+                version: None,
+                compatible: Some(false),
+                message: Some(format!("{label} was not found on PATH or in its standard install location.")),
+                suggested_action: Some(format!("Install {label} through Quick Setup or its official installer.")),
+                capabilities: capabilities.iter().map(|s| s.to_string()).collect(),
+            };
+        };
+
+        let version = self.probes.version_line(&path);
+        let state = if version.is_some() { ToolState::Ready } else { ToolState::Unhealthy };
+        ToolStatus {
+            id: id.to_string(),
+            label: label.to_string(),
+            required: true,
+            ownership: Some(ownership),
+            path: Some(path.to_string_lossy().into_owned()),
+            version,
+            state,
+            compatible: Some(state == ToolState::Ready),
+            message: if state == ToolState::Ready {
+                Some(format!("{label} detected."))
+            } else {
+                Some(format!("{label} executable found but --version failed."))
+            },
+            suggested_action: None,
+            capabilities: capabilities.iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -734,5 +810,36 @@ mod tests {
     fn find_managed_hand_path_returns_none_when_missing() {
         let tmp = std::env::temp_dir().join(format!("serenade-managed-{}-{}", std::process::id(), "none"));
         assert_eq!(find_managed_hand_path(&tmp), None);
+    }
+
+    #[test]
+    fn runtime_tools_detected_from_path() {
+        let mut probes = FakeProbes::new();
+        probes.executables.insert("treehouse".to_string(), PathBuf::from("/usr/bin/treehouse"));
+        probes.executables.insert("herdr".to_string(), PathBuf::from("/usr/bin/herdr"));
+        probes.versions.insert(PathBuf::from("/usr/bin/treehouse"), "treehouse 2.3.0".to_string());
+        probes.versions.insert(PathBuf::from("/usr/bin/herdr"), "herdr 0.8.2".to_string());
+
+        let inspector = EnvironmentInspector::new(probes, PathBuf::from("/managed"));
+        let status = inspector.scan(&default_config());
+        let treehouse = status.tools.iter().find(|t| t.id == "treehouse").unwrap();
+        let herdr = status.tools.iter().find(|t| t.id == "herdr").unwrap();
+        assert_eq!(treehouse.state, ToolState::Ready);
+        assert_eq!(herdr.state, ToolState::Ready);
+        assert!(treehouse.required);
+        assert!(herdr.required);
+    }
+
+    #[test]
+    fn missing_runtime_tools_are_required_and_block_readiness() {
+        let inspector = EnvironmentInspector::new(FakeProbes::new(), PathBuf::from("/managed"));
+        let status = inspector.scan(&default_config());
+        let treehouse = status.tools.iter().find(|t| t.id == "treehouse").unwrap();
+        let herdr = status.tools.iter().find(|t| t.id == "herdr").unwrap();
+        assert_eq!(treehouse.state, ToolState::Missing);
+        assert_eq!(herdr.state, ToolState::Missing);
+        assert!(!status.ready);
+        assert!(status.issues.iter().any(|i| i.contains("Treehouse")));
+        assert!(status.issues.iter().any(|i| i.contains("Herdr")));
     }
 }

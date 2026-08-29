@@ -87,6 +87,8 @@ export function SetupWizard({
   const toast = useToast();
   const handTool = env.tools.find((t) => t.id === "hand");
   const supervisorTool = env.tools.find((t) => t.id === "supervisor");
+  const treehouseTool = env.tools.find((t) => t.id === "treehouse");
+  const herdrTool = env.tools.find((t) => t.id === "herdr");
 
   const [state, setState] = useState<WizardState>({
     step: "welcome",
@@ -147,6 +149,36 @@ export function SetupWizard({
           toast.showToast({
             variant: "error",
             title: "Managed Hand installation failed",
+            description: toAppError(err).message,
+          });
+          return;
+        }
+      }
+
+      // Install the Hand 0.6 runtime tools (treehouse + herdr) when missing.
+      // These are external tools Hand relies on but does not install itself.
+      if (treehouseTool?.state !== "ready") {
+        try {
+          const version = await api.installTreehouse();
+          toast.showToast({ variant: "success", title: "Treehouse installed", description: version });
+        } catch (err) {
+          toast.showToast({
+            variant: "error",
+            title: "Treehouse installation failed",
+            description: toAppError(err).message,
+          });
+          return;
+        }
+      }
+
+      if (herdrTool?.state !== "ready") {
+        try {
+          const version = await api.installHerdr();
+          toast.showToast({ variant: "success", title: "Herdr installed", description: version });
+        } catch (err) {
+          toast.showToast({
+            variant: "error",
+            title: "Herdr installation failed",
             description: toAppError(err).message,
           });
           return;
@@ -369,6 +401,8 @@ export function SetupWizard({
         <div className="space-y-2 text-xs">
           <PlanRow label="Git" value={env.tools.find((t) => t.id === "git")?.state === "ready" ? "Use existing" : "Detect only — install manually if missing"} />
           <PlanRow label="Secondhand / hand" value={handTool?.state === "ready" ? `Use ${handTool.ownership ?? "existing"}` : "Install or configure a qualified version"} />
+          <PlanRow label="Treehouse" value={treehouseTool?.state === "ready" ? "Use existing" : "Install official bootstrap"} />
+          <PlanRow label="Herdr" value={herdrTool?.state === "ready" ? "Use existing" : "Install official bootstrap"} />
           <PlanRow label="Fleet" value={`Initialize at ${state.fleetPath || "—"}`} />
           <PlanRow label="Supervisor" value={state.supervisorSkipped ? "Skip for now" : "Detect OpenCode (optional)"} />
         </div>

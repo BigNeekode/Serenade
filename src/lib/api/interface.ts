@@ -29,6 +29,8 @@ export interface SerenadeApi {
   getDiagnostics(): Promise<Diagnostics>;
   initializeFleet(path: string, force?: boolean): Promise<void>;
   installManagedHand(): Promise<string>;
+  installTreehouse(): Promise<string>;
+  installHerdr(): Promise<string>;
 
   // Reads
   listProjects(): Promise<Project[]>;

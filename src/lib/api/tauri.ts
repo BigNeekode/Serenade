@@ -51,6 +51,12 @@ export class TauriSerenadeApi implements SerenadeApi {
   async installManagedHand(): Promise<string> {
     return invoke("install_managed_hand");
   }
+  async installTreehouse(): Promise<string> {
+    return invoke("install_treehouse");
+  }
+  async installHerdr(): Promise<string> {
+    return invoke("install_herdr");
+  }
 
   async listProjects(): Promise<Project[]> {
     return invoke("projects_list");

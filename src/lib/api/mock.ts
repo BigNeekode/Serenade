@@ -505,6 +505,30 @@ export class MockSerenadeApi implements SerenadeApi {
           capabilities: ["fleet"],
         },
         {
+          id: "treehouse",
+          label: "Treehouse",
+          required: true,
+          ownership: "system",
+          path: "C:\\Users\\you\\AppData\\Local\\treehouse\\treehouse.exe",
+          version: "2.3.0 (mock)",
+          state: "ready",
+          compatible: true,
+          message: "Treehouse detected.",
+          capabilities: ["worktree-runtime"],
+        },
+        {
+          id: "herdr",
+          label: "Herdr",
+          required: true,
+          ownership: "system",
+          path: "C:\\Users\\you\\AppData\\Local\\Programs\\Herdr\\bin\\herdr.exe",
+          version: "0.8.2 (mock)",
+          state: "ready",
+          compatible: true,
+          message: "Herdr detected.",
+          capabilities: ["terminal-runtime"],
+        },
+        {
           id: "supervisor",
           label: "Serenade Supervisor (OpenCode)",
           required: false,
@@ -558,6 +582,16 @@ export class MockSerenadeApi implements SerenadeApi {
     const path = "C:\\mock\\Serenade\\tools\\hand\\0.6.0\\hand.exe";
     this.config = { ...this.config, handBinaryPath: path };
     return path;
+  }
+
+  async installTreehouse(): Promise<string> {
+    await delay();
+    return "treehouse 2.3.0";
+  }
+
+  async installHerdr(): Promise<string> {
+    await delay();
+    return "herdr 0.8.2";
   }
 
   // -- reads ------------------------------------------------------------------

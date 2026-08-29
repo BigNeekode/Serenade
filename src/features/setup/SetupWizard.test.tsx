@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MockSerenadeApi } from "@/lib/api/mock";
 import { ApiContext } from "@/lib/api";
@@ -106,7 +106,7 @@ describe("SetupWizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     await waitFor(() => expect(screen.getByRole("button", { name: /prepare environment/i })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: /prepare environment/i }));
-    await waitFor(() => expect(screen.getByText(/set up serenade supervisor/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/set up serenade supervisor/i)).toBeInTheDocument(), { timeout: 5000 });
     fireEvent.click(screen.getByRole("button", { name: /skip/i }));
     expect(screen.getByText(/add your first project/i)).toBeInTheDocument();
 
@@ -141,9 +141,37 @@ describe("SetupWizard", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /prepare environment/i })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: /prepare environment/i }));
 
-    await waitFor(() => expect(screen.getByText(/set up serenade supervisor/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/set up serenade supervisor/i)).toBeInTheDocument(), { timeout: 5000 });
     const cfg = await api.getConfig();
     expect(cfg.handBinaryPath).toBe("C:\\mock\\Serenade\\tools\\hand\\0.6.0\\hand.exe");
+  });
+
+  it("installs treehouse and herdr when missing", async () => {
+    const api = new MockSerenadeApi();
+    const treehouseSpy = vi.spyOn(api, "installTreehouse");
+    const herdrSpy = vi.spyOn(api, "installHerdr");
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ApiContext.Provider value={api}>
+          <UiStoreProvider>
+            <ToastProvider>
+              <SetupWizard env={baseEnv()} onComplete={() => {}} onRevalidate={() => {}} />
+            </ToastProvider>
+          </UiStoreProvider>
+        </ApiContext.Provider>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /get started/i }));
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    fireEvent.click(screen.getByText(/quick setup/i));
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /prepare environment/i })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /prepare environment/i }));
+
+    await waitFor(() => expect(screen.getByText(/set up serenade supervisor/i)).toBeInTheDocument(), { timeout: 5000 });
+    expect(treehouseSpy).toHaveBeenCalled();
+    expect(herdrSpy).toHaveBeenCalled();
   });
 
   it("allows skipping Supervisor", async () => {
@@ -154,7 +182,7 @@ describe("SetupWizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     await waitFor(() => expect(screen.getByRole("button", { name: /prepare environment/i })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: /prepare environment/i }));
-    await waitFor(() => expect(screen.getByText(/set up serenade supervisor/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/set up serenade supervisor/i)).toBeInTheDocument(), { timeout: 5000 });
     fireEvent.click(screen.getByRole("button", { name: /skip/i }));
     expect(screen.getByText(/add your first project/i)).toBeInTheDocument();
   });
