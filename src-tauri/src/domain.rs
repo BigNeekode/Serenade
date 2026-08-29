@@ -19,6 +19,36 @@ pub struct Project {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PlanProjection {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttemptProjection {
+    pub ordinal: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskLineage {
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PlanProjection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_attempt: Option<AttemptProjection>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Task {
     pub id: String,
     pub project_id: String,
@@ -38,6 +68,8 @@ pub struct Task {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     pub attempts: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lineage: Option<TaskLineage>,
     pub created_at: String,
     pub updated_at: String,
 }
