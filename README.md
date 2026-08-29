@@ -8,20 +8,23 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg" /></a>
+  <a href="https://github.com/BigNeekode/Serenade/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/BigNeekode/Serenade/actions/workflows/ci.yml/badge.svg?branch=main" /></a>
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2.x-24C8DB?logo=tauri&logoColor=white" />
-  <img alt="Secondhand hand 0.6.0+" src="https://img.shields.io/badge/Secondhand-hand%200.6.0%2B-7C3AED" />
+  <img alt="Secondhand hand 0.6.x verified" src="https://img.shields.io/badge/Secondhand-hand%200.6.x%20verified-7C3AED" />
 </p>
 
 Serenade is a free, local-first desktop GUI for [Secondhand (`hand`)](https://github.com/atqamz/hand), the multi-agent coding orchestrator. If you run several AI coding agents in parallel, `hand` orchestrates them; **Serenade makes the fleet visible, controllable, and steerable without keeping a pile of terminals open.**
 
-> Serenade sits on top of `hand`; it does not reimplement the orchestration engine. `hand` remains the source of truth for every task, worker attempt, route, and worktree.
+> Serenade is the **Presentation + Interaction layer** above Hand. It does not reimplement orchestration, lifecycle, routing, session management, or worktree authority. `hand` remains the source of truth.
 
 ```mermaid
 flowchart LR
-    You["You"] --> Serenade["Serenade"]
-    Serenade --> Hand["Secondhand / hand"]
-    Hand --> Scout["Scout workers"]
-    Hand --> Ship["Ship workers"]
+    You["Operator"] --> Serenade["Serenade\nPresentation + Interaction"]
+    Serenade --> Hand["Secondhand / hand\nworkflow authority"]
+    Serenade --> Supervisor["Supervisor Harness"]
+    Supervisor --> Hand
+    Hand --> Scout["Scout attempts"]
+    Hand --> Ship["Ship attempts"]
     Scout --> Reports["Reports"]
     Ship --> Changes["Branches / PRs"]
     Reports --> Serenade
@@ -38,7 +41,7 @@ Running a fleet of coding agents from a CLI is powerful, but operationally expen
 - **What did the scout discover?**
 - **What needs my attention?**
 
-It also adds a **Supervisor chat** that can inspect fleet state, plan work, and propose tasks as approval cards. The supervisor never bypasses the operator: you approve every spawn.
+It also adds a **Supervisor chat** that can reason over fresh Hand-owned context, plan work, and propose tasks as approval cards. Reasoning goes through the Supervisor Harness; already-exact operator actions go directly through typed Hand operations instead of spending another LLM turn translating a button click.
 
 ## Features
 
@@ -46,20 +49,25 @@ It also adds a **Supervisor chat** that can inspect fleet state, plan work, and 
 
 | Area | What you get |
 |---|---|
-| **Overview** | Fleet health, live activity, project health, provider usage, failures, stale-worker warnings |
+| **Overview** | Fleet health, live activity, project health, provider usage, failures, plus a clearly labeled legacy-derived Attention view |
 | **Projects** | Registered repositories with a Kanban board, timeline, search, and filters |
-| **Tasks** | Worker log stream, progress, worktree + Git status, commits, scout report, retry / stop / instruct / promote actions |
-| **Agents** | Every worker attempt with harness, model, live agent state, and heartbeat warnings |
+| **Tasks** | Worker log stream, progress, worktree + Git status, commits, reports, retry / stop / instruct / promote actions, and progressive Task → Plan → Attempt lineage |
+| **Agents** | Worker attempts with harness, model, observed activity state, lifecycle-aware status, and heartbeat warnings |
 | **Worktrees** | Isolated checkouts per task with Git metadata; open in editor / file manager / terminal; confirmed cleanup |
 | **Reports** | Markdown rendering of scout reports; create follow-up work; promote scouts to ship tasks |
 | **Routes & providers** | Read-only view of Hand profiles/routes plus live worker counts |
-| **Supervisor chat** | AI supervisor with fleet context and one-click task approval cards |
+| **Supervisor chat** | Qualified headless Supervisor Harness with project/fleet scope and one-click task approval cards |
+
+On the current Hand 0.6 compatibility adapter, canonical Plan data does not exist. Serenade deliberately displays Plan as unavailable instead of manufacturing one from task/brief fields. Likewise, current Attention items are presentation-derived compatibility hints, **not** canonical Hand Attention.
 
 ### Built-in safety
 
+- **Hand stays authoritative** — UI state, chat history, provider sessions, and local caches never become workflow truth.
+- **Fail-closed version policy** — workflow mutations are enabled only for a Hand contract Serenade has explicitly qualified.
 - **No arbitrary shell endpoint** — backend actions are fixed, typed operations rather than a generic command runner.
 - **Destructive actions are confirmed** — teardown and worktree cleanup show what will happen before execution.
 - **Human-gated dispatch** — the supervisor can propose work, but only the operator can approve a spawn.
+- **Claims are not lifecycle** — a provider or WorkerReport saying `done` is not silently promoted into Attempt/Task completion.
 - **Local-first application state** — Serenade has no hosted backend or telemetry service. Your configured AI harnesses may still communicate with their own model providers.
 
 ### Developer experience
@@ -68,6 +76,8 @@ It also adds a **Supervisor chat** that can inspect fleet state, plan work, and 
 - Resizable context panel for inspecting tasks without leaving the board.
 - Shared polling cache to avoid spawning redundant `hand` processes.
 - Browser mock mode for frontend work without a live fleet.
+- Versioned Hand integration seams on both TypeScript and Rust sides.
+- GitHub Actions CI for frontend typecheck/tests/build plus Rust check/tests.
 - Dark developer-tool UI with dense operational views and monospace identifiers.
 
 ## Requirements
@@ -77,13 +87,26 @@ It also adds a **Supervisor chat** that can inspect fleet state, plan work, and 
 | [Node.js](https://nodejs.org) 22+ | Frontend toolchain |
 | [Rust](https://rustup.rs) | Tauri desktop build |
 | [Git](https://git-scm.com) | Project clones and worktree metadata |
-| [Secondhand (`hand`)](https://github.com/atqamz/hand) 0.6.0+ | Fleet orchestration and task lifecycle |
+| [Secondhand (`hand`)](https://github.com/atqamz/hand) **0.6.x** | Current verified fleet/task integration |
 | At least one Hand-supported coding harness | Worker execution through Hand profiles/routes |
 | [OpenCode](https://opencode.ai) | **Currently required only for Serenade Supervisor chat** |
 
+### Hand compatibility
+
+Serenade intentionally distinguishes “detected” from “qualified.” A newer Hand executable is not automatically assumed to have the same mutation contract.
+
+| Hand version | Current Serenade policy |
+|---|---|
+| **0.6.x** | Verified legacy adapter; workflow mutations enabled |
+| **0.7.x** | Transition contract; workflow mutations blocked until explicitly qualified |
+| **0.8.x+** | Detected as unadapted; workflow mutations blocked until the canonical adapter is implemented |
+| Unknown / unparsable | Fail closed |
+
+Diagnostics remain available where safe. Do not interpret this table as a promise that every read model from an unqualified newer Hand version can already be rendered correctly.
+
 ### Install Secondhand
 
-The recommended path is Secondhand's documented bootstrap, which installs `hand` and its runtime dependencies.
+The recommended path is Secondhand's documented bootstrap, which installs `hand` and its current runtime dependencies.
 
 Linux / macOS:
 
@@ -163,54 +186,71 @@ hand config
 
 Profile names, models, and routing policy are operator-owned choices. A normal Secondhand supervising session can inspect `hand config`, ask only for unresolved policy choices, and persist the selected profiles/routes for you.
 
-Serenade reads that configuration; it does not invent a replacement routing policy.
+Serenade reads that configuration through its Hand compatibility adapter; it does not invent a replacement routing policy.
 
 ### 5. Create your first task
 
 There are two paths:
 
-- **Direct** — click **New Task**, select a project, enter the task brief, then choose **scout** (investigation/report) or **ship** (implementation). Serenade writes the brief and dispatches the worker through `hand spawn`.
-- **Supervisor** — open **Supervisor**, describe the outcome you want, and let the supervisor propose tasks. Approved cards are written as task briefs and spawned through Hand.
+- **Direct** — click **New Task**, select a project, enter the task brief, then choose **scout** (investigation/report) or **ship** (implementation). Serenade writes the brief and dispatches the worker through the qualified Hand mutation adapter.
+- **Supervisor** — open **Supervisor**, describe the outcome you want, and let the supervisor propose tasks. Approved cards become exact typed task-create actions; approval does not spend another Supervisor/LLM turn.
 
 From there you can watch the board, inspect logs, send mid-flight instructions, review the worktree, retry failed attempts, promote scout work, and clean up completed tasks.
 
 ## Supervisor chat
 
-Serenade's current Supervisor implementation launches **OpenCode headlessly** and supplies it with Hand's supervisor session contract plus live fleet state.
+Serenade's currently qualified Supervisor Harness is **OpenCode running headlessly**.
 
-This is separate from worker routing:
+The Supervisor runtime is deliberately separate from worker routing and from canonical Fleet state:
 
-- Worker tasks may use any installed harness that Hand supports and that you configure through profiles/routes.
-- **Serenade Supervisor chat currently requires `opencode` on `PATH`.**
+- Worker Attempts may use any installed harness that Hand supports and that you configure through profiles/routes.
+- Supervisor provider/session IDs are ephemeral runtime mechanics, not Fleet workflow entities.
+- Serenade chat history is UX state, not workflow truth.
+- Every reasoning turn is instructed to refresh Hand-owned context before reasoning or acting.
+- On verified Hand 0.6, Serenade retains a `hand session start` compatibility bootstrap/fallback because `hand orient` is not part of that legacy contract.
+- **Serenade Supervisor chat currently requires `opencode` on `PATH`.** Other Supervisor Harnesses are not exposed until their headless/session/resume semantics are explicitly qualified.
 
 If OpenCode is missing, the rest of Serenade remains usable; only Supervisor chat is unavailable.
 
 ## How it works
 
 ```text
-┌────────────────────────────  Serenade (Tauri desktop app)  ─────────────────────┐
-│                                                                                  │
-│  React UI  ── TanStack Query (polling + cache) ── typed SerenadeApi             │
-│                                                        │                         │
-│  Rust backend ────────────────────────────────────────┘                          │
-│   ├─ hand adapter: fixed-argument subprocess calls, HAND_HOME, timeouts          │
-│   ├─ fleet files: briefs, reports, worker status streams, event log              │
-│   ├─ git adapter: read-only worktree metadata                                    │
-│   └─ supervisor: headless OpenCode session with Hand supervisor context          │
-└────────────────────────────────────────┬─────────────────────────────────────────┘
-                                         │
-                              Secondhand / hand CLI
-                                         │
-                    treehouse · herdr · configured worker harnesses
-                                         │
-                         project clones + isolated worktrees
+┌────────────────────────────── Serenade ──────────────────────────────┐
+│                                                                      │
+│  React presentation                                                  │
+│      │                                                               │
+│      ├─ reads / local tooling ───────────────→ SerenadeApi           │
+│      │                                                               │
+│      └─ operator workflow intent                                     │
+│             │                                                        │
+│             ▼                                                        │
+│      InteractionGateway                                              │
+│       ├─ reasoning-required ─────────→ Supervisor Harness            │
+│       └─ exact typed action ─────────┐                               │
+│                                      │                               │
+│                         TauriSerenadeApi / Tauri commands             │
+│                                      │                               │
+│                    compatibility + mutation guards                   │
+│                                      │                               │
+│                         HandLegacyGateway (0.6)                      │
+│                                      │                               │
+│                HandRunner · fleet files · Git/local adapters         │
+└──────────────────────────────────────┼───────────────────────────────┘
+                                       │
+                              Secondhand / hand
+                                       │
+                    canonical fleet/task/attempt workflow
 ```
+
+Current 0.6 integration still uses Hand's legacy CLI/files underneath the gateway. The boundary exists so a future released `HandV08Gateway` can consume canonical Hand 0.8 projections/actions without rewriting the React presentation layer.
 
 Key principles:
 
-- **`hand` is the source of truth.** Serenade reads `hand status --json`, `hand project list --json`, `hand config`, and fleet files.
-- **Mutations are real Hand operations.** Spawn, send, reopen, promote, and teardown map to their corresponding CLI operations.
+- **`hand` is the source of truth.** Serenade asks the Hand gateway for semantic reads and maps legacy results into presentation models.
+- **Reasoning and exact actions are different paths.** Free-form operator intent goes to the Supervisor; deterministic button actions go directly through typed operations.
+- **Mutations are real Hand operations and fail closed on unqualified contracts.**
 - **The frontend never needs CLI syntax.** Tauri exposes typed application commands rather than a generic shell bridge.
+- **Presentation state is disposable.** Restarting the UI or Supervisor must lose zero canonical Fleet truth.
 - **Mock mode is built in.** `npm run dev` runs the frontend against a rich in-memory fleet without requiring a live Secondhand installation.
 
 ## Repository layout
@@ -221,48 +261,62 @@ src/                  React frontend
 ├─ components/        design system, app shell, common UI
 ├─ features/          overview, supervisor, projects, tasks, agents, worktrees,
 │                     reports, routes, settings, setup
-├─ hooks/             query hooks and polling
+├─ hooks/             query hooks, polling, shared interaction hook
 ├─ lib/api/           SerenadeApi interface + Mock and Tauri implementations
-├─ state/             UI state
-└─ types/             shared domain model
+├─ lib/hand/          frontend Hand version/compatibility gateway
+├─ lib/interaction/   reasoning vs exact-action boundary
+├─ state/             UI-only state
+└─ types/             Serenade presentation/domain model
 
 src-tauri/src/        Rust backend
 ├─ lib.rs             Tauri commands and application integration
-├─ hand/              process wrapper, JSON models, TOON parser
-├─ supervisor.rs      headless Supervisor sessions
-├─ adapter.rs         Hand lifecycle → UI domain mapping
+├─ hand/
+│  ├─ gateway.rs      legacy semantic read boundary / Supervisor fallback
+│  ├─ compatibility.rs Hand version qualification policy
+│  ├─ process.rs      fixed-argument Hand runner, HAND_HOME, timeouts, guards
+│  ├─ model.rs        legacy Hand JSON models
+│  └─ toon.rs         legacy Hand TOON parsing
+├─ supervisor.rs      qualified headless Supervisor Harness runtime
+├─ adapter.rs         legacy Hand observations/lifecycle → presentation mapping
 ├─ fleet_files.rs     briefs, reports, status streams, event log
 ├─ git.rs, local.rs   Git metadata and local editor/folder/terminal launching
 └─ config.rs, error.rs, domain.rs
 
 docs/                 product design, architecture, implementation plan,
-                      backlog, and verified Hand integration notes
+                      Hand integration notes, backlog, and 0.8 alignment tracker
 ```
 
 ## Development
 
 ```sh
-npm run dev                        # frontend only, mock backend → localhost:1420
-npx tauri dev                      # full desktop app against a real fleet
-npm run test                       # Vitest + React Testing Library
-npm run lint                       # ESLint
+npm ci                             # reproducible frontend install
 npm run typecheck                  # TypeScript
-cd src-tauri && cargo test         # Rust unit tests
+npm run test                       # Vitest + React Testing Library
+npm run build                      # production frontend build
+npm run lint                       # ESLint
+npx tauri dev                      # full desktop app against a real fleet
+cargo check --locked --manifest-path src-tauri/Cargo.toml
+cargo test --locked --manifest-path src-tauri/Cargo.toml
 ```
+
+The same typecheck/test/build and Rust check/test paths run in GitHub Actions CI.
 
 The `docs/` directory contains the deeper engineering material:
 
 - [`docs/design.md`](docs/design.md) — product and UX design.
 - [`docs/architecture.md`](docs/architecture.md) — system architecture and safety model.
 - [`docs/implementation-plan.md`](docs/implementation-plan.md) — milestone plan.
-- [`docs/hand-integration-notes.md`](docs/hand-integration-notes.md) — verified Hand CLI/runtime contract.
+- [`docs/hand-integration-notes.md`](docs/hand-integration-notes.md) — verified legacy Hand CLI/runtime contract.
+- [`docs/hand-0.8-roadmap.md`](docs/hand-0.8-roadmap.md) — living Hand 0.8 alignment/progression tracker.
 - [`docs/tasks.md`](docs/tasks.md) — implementation backlog and status.
 
 ## Troubleshooting
 
+The following runtime notes apply to the currently verified Hand 0.6 stack.
+
 ### Worker spawn fails with `server_not_running`
 
-The `herdr` server is not running. Start it and retry the task.
+The current Hand 0.6 runtime expects `herdr`. Start it and retry the task.
 
 ```sh
 herdr
@@ -270,7 +324,7 @@ herdr
 
 ### Worker spawn hangs at a `>>` prompt on Windows
 
-Hand worker panes require a POSIX-compatible shell. Configure Git Bash for herdr in `%APPDATA%\herdr\config.toml`:
+Current Hand 0.6 worker panes require a POSIX-compatible shell. Configure Git Bash for herdr in `%APPDATA%\herdr\config.toml`:
 
 ```toml
 [terminal]
@@ -287,38 +341,45 @@ See [`docs/hand-integration-notes.md`](docs/hand-integration-notes.md) for the v
 
 ### Claude worker pauses on a trust/security dialog
 
-Claude Code can ask whether to allow external `CLAUDE.md` imports. Answer the prompt once in the herdr pane, or route that work through another already-configured Hand profile.
+Claude Code can ask whether to allow external `CLAUDE.md` imports. Answer the prompt once in the current Hand worker pane, or route that work through another already-configured Hand profile.
 
 ### Supervisor chat says `opencode` is not found
 
-Install OpenCode and ensure the `opencode` executable is on `PATH`. This requirement applies to Serenade's Supervisor chat, not to all worker routes.
+Install OpenCode and ensure the `opencode` executable is on `PATH`. This requirement applies to Serenade's currently qualified Supervisor Harness, not to all worker routes.
 
 ### Task looks active after the coding agent finished
 
-Some harness behavior can leave Hand without the expected final report line. Serenade surfaces the resulting state so you can inspect the worktree, send another instruction, or tear the task down deliberately.
+A provider finishing a turn or a WorkerReport claiming `done` is not the same thing as Hand completing an Attempt. Serenade deliberately keeps those facts separate. Inspect the Attempt/worktree/report state and perform the appropriate explicit action instead of assuming provider `done` means lifecycle completion.
+
+### Serenade says workflow mutations are blocked
+
+Open **Settings → Diagnostics** and check the detected Hand contract. Serenade intentionally fails closed when the installed Hand version has not been explicitly qualified for mutations.
 
 ## Status and roadmap
 
-**MVP complete and live-verified against Hand 0.6.0 on Windows.** Core fleet views, task lifecycle operations, worktrees, reports, and Supervisor proposals have been exercised against a real fleet.
+**MVP complete and live-verified against Hand 0.6.0 on Windows.** The current `main` branch also includes the Hand 0.8 alignment/stabilization work: versioned gateway boundaries, fail-closed mutation compatibility, Supervisor/runtime separation, lifecycle-safe `done` handling, progressive Task → Plan → Attempt presentation, and provenance-labeled Attention compatibility UI.
 
-Next areas:
+The goal is **not** to guess Hand 0.8 ahead of upstream. Canonical `FleetSnapshot`, `Attention`, `SupervisorOrientation`, Plan/currentness contracts, WorkerInput/WorkerWake, and native WorktreeBinding integration remain intentionally blocked until their released Hand contracts stabilize.
 
+Safe next areas:
+
+- Expand full Task detail so report Claim, provider activity, and Attempt lifecycle are separately named facts.
+- Live-test the actual OpenCode Supervisor runtime contract against the verified Hand 0.6 environment.
+- Qualify additional Supervisor Harness adapters only when their headless/session/resume semantics are known.
 - Installer bundles and finalized application branding/icons.
-- `hand watch --until-event` as a push-style event source where appropriate.
 - Streaming Supervisor replies.
-- Safe profile/route editing in Serenade.
 - Token and cost analytics where the underlying harness data is available.
 
-See [`docs/tasks.md`](docs/tasks.md) for the detailed backlog.
+See [`docs/hand-0.8-roadmap.md`](docs/hand-0.8-roadmap.md) for Hand alignment progress and [`docs/tasks.md`](docs/tasks.md) for the broader backlog.
 
 ## Contributing
 
-Issues and pull requests are welcome. For implementation work, start with the architecture and Hand integration notes so changes preserve the core invariants: Hand remains the source of truth, destructive actions stay explicit, and Serenade does not expose arbitrary shell execution.
+Issues and pull requests are welcome. For implementation work, start with the architecture, verified Hand integration notes, and the 0.8 alignment roadmap. Preserve the core invariants: Hand remains the source of truth, presentation state stays disposable, lifecycle facts are not inferred from provider claims, destructive actions stay explicit, unqualified Hand contracts fail closed, and Serenade does not expose arbitrary shell execution.
 
 ## Acknowledgments
 
-- [Secondhand / `hand`](https://github.com/atqamz/hand) — the orchestration engine Serenade controls.
-- [treehouse](https://github.com/kunchenguid/treehouse) and [herdr](https://herdr.dev) — worktree pooling and worker-pane supervision used by Hand.
+- [Secondhand / `hand`](https://github.com/atqamz/hand) — the orchestration engine Serenade presents and interacts with.
+- [treehouse](https://github.com/kunchenguid/treehouse) and [herdr](https://herdr.dev) — dependencies used by the currently verified Hand 0.6 runtime; Serenade intentionally does not make them part of its long-term domain model.
 - [Tauri](https://tauri.app), React, Tailwind CSS, TanStack Query, and the broader open-source ecosystem behind the desktop UI.
 
 ## License
