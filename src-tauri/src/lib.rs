@@ -12,7 +12,8 @@ use crate::config::{AppConfig, ConfigStore};
 use crate::domain::*;
 use crate::error::{Code, SerenadeError};
 use crate::fleet_files::{valid_task_id, FleetFiles};
-use crate::hand::model::{FleetJson, ProjectJson, StatusJson};
+use crate::hand::gateway::HandLegacyGateway;
+use crate::hand::model::{FleetJson, StatusJson};
 use crate::hand::{toon, HandRunner};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -72,15 +73,14 @@ fn global_runner(config: &AppConfig) -> HandRunner {
     }
 }
 
-fn fleet_status(runner: &HandRunner) -> Result<FleetJson, SerenadeError> {
-    runner.json(&["status", "--json"], 20)
-}
-
 /// TTL-cached fleet status. Every polled view (tasks, agents, worktrees,
-/// reports, events, routes) needs the same `hand status --json`; without this
-/// each poll spawns its own hand process — the main source of UI lag and
+/// reports, events, routes) needs the same fleet snapshot; without this each
+/// poll spawns its own hand process — the main source of UI lag and
 /// console-window flashing on Windows. The lock is held across the run so
 /// concurrent callers dedupe into a single process.
+///
+/// The legacy CLI spelling lives in `HandLegacyGateway`; this cache layer only
+/// knows the semantic read.
 const FLEET_CACHE_TTL: Duration = Duration::from_millis(3_000);
 
 fn fleet_status_cached(runner: &HandRunner) -> Result<Arc<FleetJson>, SerenadeError> {
@@ -91,7 +91,8 @@ fn fleet_status_cached(runner: &HandRunner) -> Result<Arc<FleetJson>, SerenadeEr
             return Ok(fleet.clone());
         }
     }
-    let fleet = Arc::new(fleet_status(runner)?);
+    let gateway = HandLegacyGateway::new(runner.clone());
+    let fleet = Arc::new(gateway.fleet_status()?);
     *guard = Some((Instant::now(), fleet.clone()));
     Ok(fleet)
 }
@@ -117,21 +118,6 @@ fn git_inspect_cached(path: &str) -> git::GitInfo {
     let info = git::inspect(path);
     guard.insert(path.to_string(), (Instant::now(), info.clone()));
     info
-}
-
-fn task_status(runner: &HandRunner, task_id: &str) -> Result<StatusJson, SerenadeError> {
-    if !valid_task_id(task_id) {
-        return Err(SerenadeError::new(
-            Code::InvalidPath,
-            "Invalid task id",
-            format!("{task_id:?} is not a valid hand task id."),
-        ));
-    }
-    let status: StatusJson = runner.json(&["status", task_id, "--json"], 20)?;
-    if status.id.is_empty() {
-        return Err(SerenadeError::task_not_found(task_id));
-    }
-    Ok(status)
 }
 
 fn held_ids(fleet: &FleetJson) -> HashSet<String> {
@@ -254,9 +240,9 @@ async fn diagnostics_get() -> Result<Diagnostics, SerenadeError> {
 
 #[tauri::command]
 async fn projects_list() -> Result<Vec<Project>, SerenadeError> {
-    let (config, runner, files) = setup()?;
-    let raw: Vec<ProjectJson> = runner.json(&["project", "list", "--json"], 15)?;
-    let _ = config;
+    let (_config, runner, files) = setup()?;
+    let gateway = HandLegacyGateway::new(runner);
+    let raw = gateway.projects()?;
     Ok(raw
         .into_iter()
         .map(|p| {
@@ -328,7 +314,8 @@ async fn task_get(task_id: String) -> Result<Task, SerenadeError> {
         let held = fleet.holds.iter().any(|h| h.id == task_id);
         return Ok(adapter::to_task(s, &files, held));
     }
-    let s = task_status(&runner, &task_id)?;
+    let gateway = HandLegacyGateway::new(runner);
+    let s = gateway.task_status(&task_id)?;
     let held = s.held.is_some();
     Ok(adapter::to_task(&s, &files, held))
 }
@@ -350,19 +337,9 @@ async fn agents_list() -> Result<Vec<AgentRun>, SerenadeError> {
             }
             let active_ordinal = s.attempt_ordinal.unwrap_or(0);
             for a in attempts {
-                let mut run = agent_from_attempt(s, a);
-                if a.ordinal == active_ordinal {
-                    // Provider activity enriches presentation only. In
-                    // particular, provider/agent `done` while the Attempt is
-                    // still running means waiting, not lifecycle completion.
-                    if a.lifecycle == "running" {
-                        run.status = match s.agent_state.as_deref().unwrap_or("unknown") {
-                            "working" => "running".into(),
-                            "idle" | "done" => "waiting".into(),
-                            "blocked" => "blocked".into(),
-                            other => other.to_string(),
-                        };
-                    }
+                let is_active = a.ordinal == active_ordinal;
+                let mut run = agent_from_attempt(s, a, is_active);
+                if is_active {
                     run.heartbeat_at = s.last_report_at.clone();
                 }
                 agents.push(run);
@@ -375,21 +352,30 @@ async fn agents_list() -> Result<Vec<AgentRun>, SerenadeError> {
     Ok(agents)
 }
 
-fn agent_from_attempt(s: &StatusJson, a: &hand::model::AttemptJson) -> AgentRun {
-    AgentRun {
-        id: adapter::agent_id_for(&s.id, a.ordinal),
-        task_id: Some(s.id.clone()),
-        project_id: Some(s.project.clone()),
-        provider: a.harness.clone().unwrap_or_else(|| "unknown".into()),
-        model: a.model.clone(),
-        status: match a.lifecycle.as_str() {
+fn agent_from_attempt(s: &StatusJson, a: &hand::model::AttemptJson, is_active: bool) -> AgentRun {
+    // For the active Attempt, use the consolidated adapter mapping so
+    // provider/agent `done` while the Attempt is running is presented as
+    // waiting, not lifecycle completion. Older attempts keep their own
+    // lifecycle-derived status.
+    let status = if is_active {
+        adapter::derive_agent_status(s).to_string()
+    } else {
+        match a.lifecycle.as_str() {
             "provisioning" => "starting".to_string(),
             "running" => "running".to_string(),
             "completed" => "completed".to_string(),
             "failed" => "failed".to_string(),
             "interrupted" => "stopped".to_string(),
             _ => "unknown".to_string(),
-        },
+        }
+    };
+    AgentRun {
+        id: adapter::agent_id_for(&s.id, a.ordinal),
+        task_id: Some(s.id.clone()),
+        project_id: Some(s.project.clone()),
+        provider: a.harness.clone().unwrap_or_else(|| "unknown".into()),
+        model: a.model.clone(),
+        status,
         branch: a.worktree.as_ref().map(|w| {
             std::path::Path::new(w)
                 .file_name()
@@ -528,7 +514,8 @@ async fn report_get(report_id: String) -> Result<Report, SerenadeError> {
 #[tauri::command]
 async fn routes_list() -> Result<RoutesPayload, SerenadeError> {
     let (_, runner, _) = setup()?;
-    let doc = runner.expect(&["config"], 15)?;
+    let gateway = HandLegacyGateway::new(runner.clone());
+    let doc = gateway.config_document()?;
     let mut providers = Vec::new();
     for row in toon::table(&doc, "harnesses") {
         if row.len() < 2 {
@@ -862,7 +849,8 @@ async fn task_create(input: serde_json::Value) -> Result<Task, SerenadeError> {
     runner.expect(&args, 180)?;
     invalidate_fleet_cache();
 
-    let s = task_status(&runner, &id)?;
+    let gateway = HandLegacyGateway::new(runner);
+    let s = gateway.task_status(&id)?;
     Ok(adapter::to_task(&s, &files, false))
 }
 
@@ -910,7 +898,8 @@ async fn task_promote(task_id: String) -> Result<Task, SerenadeError> {
     runner.assert_workflow_mutation_compatible()?;
     runner.expect(&["promote", &task_id], 180)?;
     invalidate_fleet_cache();
-    let s = task_status(&runner, &task_id)?;
+    let gateway = HandLegacyGateway::new(runner);
+    let s = gateway.task_status(&task_id)?;
     Ok(adapter::to_task(&s, &files, false))
 }
 
@@ -940,7 +929,10 @@ fn worktree_path_for(task_id: &str) -> Result<PathBuf, SerenadeError> {
                 .find(|t| t.id == task_id)
                 .and_then(|t| t.worktree.clone())
         })
-        .or_else(|| task_status(&runner, task_id).ok().and_then(|s| s.worktree));
+        .or_else(|| {
+            let gateway = HandLegacyGateway::new(runner.clone());
+            gateway.task_status(task_id).ok().and_then(|s| s.worktree)
+        });
     let path = path.ok_or_else(|| {
         SerenadeError::new(
             Code::WorktreeNotFound,
@@ -1027,7 +1019,8 @@ async fn supervisor_chat(
         .get(&scope)
         .cloned();
     let prompt = if session_id.is_none() {
-        let session_doc = runner.expect(&["session", "start"], 20)?;
+        let gateway = HandLegacyGateway::new(runner);
+        let session_doc = gateway.session_start_hint()?;
         supervisor::build_first_turn_prompt(
             &session_doc,
             "",
@@ -1036,6 +1029,7 @@ async fn supervisor_chat(
             project_id.as_deref(),
         )
     } else {
+        let _ = runner;
         msg.to_string()
     };
 

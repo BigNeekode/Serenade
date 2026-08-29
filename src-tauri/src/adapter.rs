@@ -258,4 +258,38 @@ mod tests {
         s.task_lifecycle = Some("terminal".into());
         assert_eq!(derive_task_status(&s, false), "done");
     }
+
+    #[test]
+    fn worker_report_done_does_not_complete_running_attempt() {
+        let mut s = status("running", None);
+        s.reported = Some(ReportedJson {
+            state: "done".into(),
+            note: "worker claims done".into(),
+        });
+        // A WorkerReport `done` claim is not lifecycle completion while the
+        // Attempt is still running.
+        assert_eq!(derive_task_status(&s, false), "in_progress");
+    }
+
+    #[test]
+    fn legacy_lineage_does_not_invent_plan() {
+        let s = StatusJson {
+            id: "task-1".into(),
+            project: "demo".into(),
+            kind: "ship".into(),
+            attempt_ordinal: Some(1),
+            attempt_lifecycle: Some("running".into()),
+            harness: Some("opencode".into()),
+            model: Some("claude".into()),
+            ..Default::default()
+        };
+        let files = FleetFiles::new(std::path::PathBuf::from("/tmp/no-such-fleet"));
+        let task = to_task(&s, &files, false);
+        assert_eq!(task.lineage.as_ref().unwrap().source, "legacy");
+        assert!(
+            task.lineage.as_ref().unwrap().plan.is_none(),
+            "legacy adapter must not synthesize a Plan from brief/task fields"
+        );
+        assert_eq!(task.lineage.as_ref().unwrap().active_attempt.as_ref().unwrap().ordinal, 1);
+    }
 }
