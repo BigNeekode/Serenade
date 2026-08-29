@@ -62,10 +62,6 @@ export class TauriSerenadeApi implements SerenadeApi {
     await this.hand.assertMutationCompatible();
     return invoke("project_add", { source });
   }
-  async createProject(name: string): Promise<void> {
-    await this.hand.assertMutationCompatible();
-    return invoke("project_create", { name });
-  }
 
   async listTasks(projectId?: string): Promise<Task[]> {
     return invoke("tasks_list", { projectId: projectId ?? null });

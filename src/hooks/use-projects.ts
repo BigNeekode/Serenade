@@ -41,12 +41,3 @@ export function useAddProject() {
     onSuccess: () => invalidate(),
   });
 }
-
-export function useCreateProject() {
-  const interaction = useInteraction();
-  const invalidate = useProjectMutationInvalidation();
-  return useMutation({
-    mutationFn: (name: string) => interaction.createProject(name),
-    onSuccess: () => invalidate(),
-  });
-}

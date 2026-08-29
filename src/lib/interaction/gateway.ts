@@ -29,10 +29,6 @@ export class InteractionGateway {
     return this.api.addProject(source);
   }
 
-  createProject(name: string): Promise<void> {
-    return this.api.createProject(name);
-  }
-
   sendTaskMessage(taskId: string, message: string): Promise<void> {
     return this.api.sendTaskMessage(taskId, message);
   }

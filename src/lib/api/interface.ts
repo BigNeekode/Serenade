@@ -34,7 +34,6 @@ export interface SerenadeApi {
   listProjects(): Promise<Project[]>;
   getProject(projectId: string): Promise<Project>;
   addProject(source: string): Promise<void>;
-  createProject(name: string): Promise<void>;
   listTasks(projectId?: string): Promise<Task[]>;
   getTask(taskId: string): Promise<Task>;
   listAgents(): Promise<AgentRun[]>;

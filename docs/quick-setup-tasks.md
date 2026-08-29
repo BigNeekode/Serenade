@@ -278,18 +278,18 @@ Current qualified Serenade Supervisor Harness: OpenCode.
 ### QS-700 validation results
 
 ```text
-Date: 2026-08-29
+Date: 2026-08-29 (corrected)
 Frontend typecheck: pass
-Frontend tests: 31/31 pass (1 new project-registration test)
+Frontend tests: pass
 Frontend build: pass
 Rust check: pass
-Rust tests: 32/32 pass
-Notes:
-- Verified Hand 0.6 supports: project add <url>, project add <local-path>, project create <name>.
-- Added project_add and project_create Tauri commands using existing HandRunner/compat guards.
-- Added SerenadeApi.addProject / createProject and wired them into SetupWizard.
-- Wizard exposes URL, local path, and create-new input modes only.
-- Project list is refreshed via onRevalidate after registration.
+Rust tests: pass
+Notes (corrected against hand v0.6.0 cmd/project.go):
+- Hand 0.6 `project` subcommands: add (URL-only), list, remove, sync, upstream, set-url.
+- `hand project add` validates the source must start with https://, git@, ssh://, or git://.
+- `hand project create` and local-path adoption are Hand 0.8 contracts; NOT supported by 0.6.
+- Serenade exposes only URL-based registration (project_add) and rejects local/`create` sources early.
+- Removed project_create command and createProject from API/mock/interaction/hooks.
 ```
 
 ---

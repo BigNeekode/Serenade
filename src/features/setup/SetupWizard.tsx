@@ -26,9 +26,6 @@ interface WizardState {
   handPath: string;
   supervisorSkipped: boolean;
   projectUrl: string;
-  projectLocalPath: string;
-  projectName: string;
-  projectInputMode: "url" | "local" | "create";
 }
 
 function toolStateIcon(state: ToolStatus["state"]) {
@@ -97,9 +94,6 @@ export function SetupWizard({
     handPath: handTool?.path ?? "hand",
     supervisorSkipped: false,
     projectUrl: "",
-    projectLocalPath: "",
-    projectName: "",
-    projectInputMode: "url",
   });
 
   const [busy, setBusy] = useState(false);
@@ -192,15 +186,9 @@ export function SetupWizard({
 
   const handleProjectContinue = async () => {
     try {
-      if (state.projectInputMode === "url" && state.projectUrl.trim()) {
+      if (state.projectUrl.trim()) {
         await api.addProject(state.projectUrl.trim());
         toast.showToast({ variant: "success", title: "Project added", description: state.projectUrl.trim() });
-      } else if (state.projectInputMode === "local" && state.projectLocalPath.trim()) {
-        await api.addProject(state.projectLocalPath.trim());
-        toast.showToast({ variant: "success", title: "Project added", description: state.projectLocalPath.trim() });
-      } else if (state.projectInputMode === "create" && state.projectName.trim()) {
-        await api.createProject(state.projectName.trim());
-        toast.showToast({ variant: "success", title: "Project created", description: state.projectName.trim() });
       }
       onRevalidate();
       setStep("ready");
@@ -424,69 +412,27 @@ export function SetupWizard({
     return (
       <WizardLayout
         title="Add your first project"
-        subtitle="Only modes supported by your qualified Hand version are shown."
+        subtitle="Hand 0.6 registers remote Git repositories. Create the repo on your remote first, then add its URL."
         actions={
           <>
             <Button variant="secondary" onClick={() => setStep("supervisor")}>
               Back
             </Button>
             <Button variant="primary" onClick={handleProjectContinue}>
-              {state.projectUrl.trim() || state.projectLocalPath.trim() || state.projectName.trim()
-                ? "Add project"
-                : "Skip"}
+              {state.projectUrl.trim() ? "Add project" : "Skip"}
             </Button>
           </>
         }
       >
         <div className="space-y-4">
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-xs">
-              <input
-                type="radio"
-                checked={state.projectInputMode === "url"}
-                onChange={() => setState((s) => ({ ...s, projectInputMode: "url" }))}
-              />
-              Git repository URL
-            </label>
+          <Field label="Git repository URL" hint="https://github.com/you/repo or git@github.com:you/repo.git">
             <Input
               value={state.projectUrl}
               onChange={(e) => setState((s) => ({ ...s, projectUrl: e.target.value }))}
               placeholder="https://github.com/example/repo"
-              disabled={state.projectInputMode !== "url"}
+              autoFocus
             />
-          </div>
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-xs">
-              <input
-                type="radio"
-                checked={state.projectInputMode === "local"}
-                onChange={() => setState((s) => ({ ...s, projectInputMode: "local" }))}
-              />
-              Existing local repository
-            </label>
-            <Input
-              value={state.projectLocalPath}
-              onChange={(e) => setState((s) => ({ ...s, projectLocalPath: e.target.value }))}
-              placeholder="C:\\Projects\\my-project"
-              disabled={state.projectInputMode !== "local"}
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-xs">
-              <input
-                type="radio"
-                checked={state.projectInputMode === "create"}
-                onChange={() => setState((s) => ({ ...s, projectInputMode: "create" }))}
-              />
-              Create a new local-only project
-            </label>
-            <Input
-              value={state.projectName}
-              onChange={(e) => setState((s) => ({ ...s, projectName: e.target.value }))}
-              placeholder="new-project"
-              disabled={state.projectInputMode !== "create"}
-            />
-          </div>
+          </Field>
         </div>
       </WizardLayout>
     );

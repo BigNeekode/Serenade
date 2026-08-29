@@ -267,33 +267,34 @@ async fn project_get(project_id: String) -> Result<Project, SerenadeError> {
 async fn project_add(source: String) -> Result<(), SerenadeError> {
     let (_, runner, _) = setup()?;
     runner.assert_workflow_mutation_compatible()?;
-    if source.trim().is_empty() {
+    let source = source.trim();
+    if source.is_empty() {
         return Err(SerenadeError::new(
             Code::InvalidPath,
             "Invalid project source",
             "Project source must not be empty.",
         ));
     }
-    runner.expect(&["project", "add", &source], 120)?;
+    // Hand 0.6 only registers remote sources; local paths and `create` are 0.8
+    // contracts. Reject early so the user sees a clear message instead of an
+    // opaque "invalid project URL" from hand.
+    if !is_supported_project_url(source) {
+        return Err(SerenadeError::new(
+            Code::InvalidPath,
+            "Unsupported project source",
+            "Hand 0.6 only registers remote Git URLs (https://, git@, ssh://, git://).",
+        )
+        .with_action("Create the repository on your remote first, then register its URL."));
+    }
+    runner.expect(&["project", "add", source], 120)?;
     invalidate_fleet_cache();
     Ok(())
 }
 
-#[tauri::command]
-async fn project_create(name: String) -> Result<(), SerenadeError> {
-    let (_, runner, _) = setup()?;
-    runner.assert_workflow_mutation_compatible()?;
-    let name = name.trim();
-    if name.is_empty() {
-        return Err(SerenadeError::new(
-            Code::InvalidPath,
-            "Invalid project name",
-            "Project name must not be empty.",
-        ));
-    }
-    runner.expect(&["project", "create", name], 120)?;
-    invalidate_fleet_cache();
-    Ok(())
+fn is_supported_project_url(source: &str) -> bool {
+    ["https://", "git@", "ssh://", "git://"]
+        .iter()
+        .any(|prefix| source.starts_with(prefix))
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,7 +1112,6 @@ pub fn run() {
             projects_list,
             project_get,
             project_add,
-            project_create,
             tasks_list,
             task_get,
             agents_list,
@@ -1135,4 +1135,20 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_supported_project_url;
+
+    #[test]
+    fn project_add_accepts_only_remote_sources() {
+        assert!(is_supported_project_url("https://github.com/you/repo.git"));
+        assert!(is_supported_project_url("git@github.com:you/repo.git"));
+        assert!(is_supported_project_url("ssh://git@github.com/you/repo.git"));
+        assert!(is_supported_project_url("git://github.com/you/repo.git"));
+        assert!(!is_supported_project_url("C:\\dev\\repo"));
+        assert!(!is_supported_project_url("~/work/repo"));
+        assert!(!is_supported_project_url("github.com/you/repo"));
+    }
 }

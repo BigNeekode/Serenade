@@ -4,15 +4,16 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field, Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
-import { useAddProject, useCreateProject } from "@/hooks/use-projects";
+import { useAddProject } from "@/hooks/use-projects";
 import { toAppError } from "@/types/domain";
 
-type InputMode = "url" | "local" | "create";
+const URL_PATTERN = /^(https:\/\/|git@|ssh:\/\/|git:\/\/)/;
 
 /**
- * Register or create a project through Hand's canonical contract
- * (`hand project add` / `hand project create`). Serenade does not own the
- * registered-project source of truth; it only invokes Hand and refreshes.
+ * Register a project through Hand 0.6's canonical contract (`hand project add`).
+ * Hand 0.6 only accepts remote Git sources; `create` and local-path adoption
+ * are 0.8 contracts and are intentionally not offered here. Serenade does not
+ * own the registered-project source of truth.
  */
 export function ProjectCreateDialog({
   open,
@@ -28,35 +29,24 @@ export function ProjectCreateDialog({
 function ProjectCreateForm({ onClose }: { onClose: () => void }) {
   const toast = useToast();
   const addProject = useAddProject();
-  const createProject = useCreateProject();
 
-  const [mode, setMode] = useState<InputMode>("url");
   const [url, setUrl] = useState("");
-  const [localPath, setLocalPath] = useState("");
-  const [name, setName] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
 
-  const pending = addProject.isPending || createProject.isPending;
-
   const submit = async () => {
-    const errors: string[] = [];
-    if (mode === "url" && !url.trim()) errors.push("Enter a Git repository URL.");
-    if (mode === "local" && !localPath.trim()) errors.push("Enter a local repository path.");
-    if (mode === "create" && !name.trim()) errors.push("Enter a project name.");
-    setErrors(errors);
-    if (errors.length > 0) return;
+    const next: string[] = [];
+    const trimmed = url.trim();
+    if (!trimmed) {
+      next.push("Enter a Git repository URL.");
+    } else if (!URL_PATTERN.test(trimmed)) {
+      next.push("Hand 0.6 only accepts remote URLs (https://, git@, ssh://, git://).");
+    }
+    setErrors(next);
+    if (next.length > 0) return;
 
     try {
-      if (mode === "url") {
-        await addProject.mutateAsync(url.trim());
-        toast.showToast({ variant: "success", title: "Project added", description: url.trim() });
-      } else if (mode === "local") {
-        await addProject.mutateAsync(localPath.trim());
-        toast.showToast({ variant: "success", title: "Project added", description: localPath.trim() });
-      } else {
-        await createProject.mutateAsync(name.trim());
-        toast.showToast({ variant: "success", title: "Project created", description: name.trim() });
-      }
+      await addProject.mutateAsync(trimmed);
+      toast.showToast({ variant: "success", title: "Project added", description: trimmed });
       onClose();
     } catch (err) {
       const message = toAppError(err).message;
@@ -65,82 +55,39 @@ function ProjectCreateForm({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const modeOption = (value: InputMode, label: string, hint: string) => (
-    <button
-      type="button"
-      onClick={() => {
-        setMode(value);
-        setErrors([]);
-      }}
-      className={`w-full rounded-lg border p-3 text-left transition-colors ${
-        mode === value ? "border-accent/60 bg-accent/5" : "border-line bg-surface hover:border-line-strong"
-      }`}
-    >
-      <div className="flex items-center gap-2">
-        <span
-          className={`h-3.5 w-3.5 rounded-full border ${
-            mode === value ? "border-accent bg-accent" : "border-line-strong"
-          }`}
-        />
-        <span className="text-xs font-medium text-fg">{label}</span>
-      </div>
-      <p className="mt-1 pl-5 text-[11px] leading-relaxed text-fg-muted">{hint}</p>
-    </button>
-  );
-
   return (
     <Dialog
       open
       onClose={onClose}
       title="New Project"
-      description="Register or create a project through Hand. Remote and local sources are cloned under the Fleet home."
+      description="Register a remote Git repository with your Hand fleet. Hand 0.6 clones the repo and registers it."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={submit} loading={pending}>
+          <Button variant="primary" onClick={submit} loading={addProject.isPending}>
             <Plus size={13} />
-            {mode === "create" ? "Create project" : "Add project"}
+            Add project
           </Button>
         </>
       }
     >
-      <div className="space-y-3">
-        {modeOption("url", "Git repository URL", "Clone a remote repository, e.g. https://github.com/you/repo or git@github.com:you/repo.git.")}
-        {modeOption("local", "Existing local repository", "Adopt a local Git checkout. Hand copies committed state into a Fleet-managed clone and leaves the source untouched.")}
-        {modeOption("create", "Create a new project", "Create an empty local-only Git-backed project with one baseline commit.")}
+      <div className="space-y-4">
+        <Field label="Repository URL" hint="e.g. https://github.com/you/repo or git@github.com:you/repo.git">
+          <Input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://github.com/you/repo"
+            autoFocus
+          />
+        </Field>
 
-        {mode === "url" && (
-          <Field label="Repository URL">
-            <Input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://github.com/you/repo"
-              autoFocus
-            />
-          </Field>
-        )}
-        {mode === "local" && (
-          <Field label="Local repository path">
-            <Input
-              value={localPath}
-              onChange={(e) => setLocalPath(e.target.value)}
-              placeholder="C:\\dev\\my-project"
-              autoFocus
-            />
-          </Field>
-        )}
-        {mode === "create" && (
-          <Field label="Project name">
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="new-project"
-              autoFocus
-            />
-          </Field>
-        )}
+        <p className="rounded-lg border border-line bg-surface p-3 text-[11px] leading-relaxed text-fg-subtle">
+          Creating a brand-new repository is done on your Git remote first. Hand 0.6 then registers it here
+          by cloning the URL. You can keep work local by choosing the{" "}
+          <span className="font-mono">local-only</span> delivery mode.
+        </p>
 
         {errors.length > 0 && (
           <div className="rounded-lg border border-danger/30 bg-danger-soft px-3 py-2">

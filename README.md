@@ -151,7 +151,7 @@ On first launch Serenade opens a **Quick Setup** wizard if it has not been compl
 4. **Setup Plan** — preview what Serenade will do before any download or installation.
 5. **Prepare Environment** — Serenade downloads and installs a qualified Hand 0.6.x release asset, verifies its checksum, and initializes the Fleet through `hand init`.
 6. **Supervisor (optional)** — detect or skip OpenCode setup.
-7. **First Project** — add a Git URL, local repository, or create a new local-only project.
+7. **First Project** — register a remote Git repository by URL.
 8. **Ready** — enter the main Serenade UI.
 
 You can reopen the wizard or manage the environment later from **Settings → Environment**. The same read-only scan and repair actions are available there.
@@ -214,17 +214,13 @@ Then set that directory in **Serenade → Settings → Fleet paths** and save th
 
 ### 3. Register a project
 
-From Quick Setup or the Projects page you can add:
-
-- a Git repository URL (`https://...` or `git@...`)
-- an existing local Git repository
-- a new local-only project (`hand project create`)
-
-Or from a terminal:
+Hand 0.6 registers remote Git repositories. From Quick Setup or the Projects page, add a Git repository URL:
 
 ```sh
 hand project add https://github.com/you/your-repo
 ```
+
+`hand project add` also accepts `git@…`, `ssh://…`, and `git://…` URLs. Creating a brand-new repository or adopting a local checkout (`hand project create` / local paths) are Hand 0.8 features not yet exposed by Serenade. To start a brand-new project, create the repository on your remote first, then register its URL here.
 
 You can confirm the fleet configuration with:
 

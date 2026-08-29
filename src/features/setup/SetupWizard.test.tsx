@@ -110,13 +110,14 @@ describe("SetupWizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /skip/i }));
     expect(screen.getByText(/add your first project/i)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByLabelText(/create a new local-only project/i));
-    fireEvent.change(screen.getByPlaceholderText("new-project"), { target: { value: "demo-project" } });
+    fireEvent.change(screen.getByLabelText(/git repository url/i), {
+      target: { value: "https://github.com/acme/demo.git" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /add project/i }));
 
     await waitFor(() => expect(screen.getByText(/everything is ready/i)).toBeInTheDocument());
     const projects = await api.listProjects();
-    expect(projects.some((p) => p.name === "demo-project")).toBe(true);
+    expect(projects.some((p) => p.name === "demo")).toBe(true);
   });
 
   it("points config at the managed Hand path after installing", async () => {

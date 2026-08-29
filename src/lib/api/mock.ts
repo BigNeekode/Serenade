@@ -576,26 +576,21 @@ export class MockSerenadeApi implements SerenadeApi {
 
   async addProject(source: string): Promise<void> {
     await delay();
-    if (!source.trim()) throw new SerenadeApiError({ code: "INVALID_PATH", title: "Invalid source", message: "Project source must not be empty.", recoverable: true });
-    const name = source.split("/").pop()?.replace(/\.git$/, "") ?? `project-${this.projectStore.length + 1}`;
+    const trimmed = source.trim();
+    if (!trimmed) throw new SerenadeApiError({ code: "INVALID_PATH", title: "Invalid source", message: "Project source must not be empty.", recoverable: true });
+    if (!/^(https:\/\/|git@|ssh:\/\/|git:\/\/)/.test(trimmed)) {
+      throw new SerenadeApiError({
+        code: "INVALID_PATH",
+        title: "Unsupported project source",
+        message: "Hand 0.6 only registers remote Git URLs (https://, git@, ssh://, git://).",
+        recoverable: true,
+      });
+    }
+    const name = trimmed.split("/").pop()?.replace(/\.git$/, "") ?? `project-${this.projectStore.length + 1}`;
     this.projectStore.push({
       id: `p_${name}`,
       name,
-      repoUrl: source.startsWith("http") || source.startsWith("git@") ? source : undefined,
-      repoPath: source.startsWith("http") || source.startsWith("git@") ? undefined : source,
-      status: "active",
-      defaultBranch: "main",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  async createProject(name: string): Promise<void> {
-    await delay();
-    if (!name.trim()) throw new SerenadeApiError({ code: "INVALID_PATH", title: "Invalid name", message: "Project name must not be empty.", recoverable: true });
-    this.projectStore.push({
-      id: `p_${name.trim()}`,
-      name: name.trim(),
+      repoUrl: trimmed,
       status: "active",
       defaultBranch: "main",
       createdAt: new Date().toISOString(),

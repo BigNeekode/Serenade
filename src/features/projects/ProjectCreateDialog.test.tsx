@@ -23,20 +23,6 @@ function renderDialog(api: MockSerenadeApi) {
 }
 
 describe("ProjectCreateDialog", () => {
-  it("creates a new local-only project", async () => {
-    const api = new MockSerenadeApi();
-    const user = userEvent.setup();
-    renderDialog(api);
-
-    await user.click(screen.getByText("Create a new project"));
-    await user.type(screen.getByLabelText("Project name"), "demo-project");
-    await user.click(screen.getByRole("button", { name: /create project/i }));
-
-    expect(await screen.findByText("Project created")).toBeInTheDocument();
-    const projects = await api.listProjects();
-    expect(projects.some((p) => p.name === "demo-project")).toBe(true);
-  });
-
   it("adds a project from a Git URL", async () => {
     const api = new MockSerenadeApi();
     const user = userEvent.setup();
@@ -50,12 +36,23 @@ describe("ProjectCreateDialog", () => {
     expect(projects.some((p) => p.name === "demo")).toBe(true);
   });
 
-  it("shows an error when the required field is empty", async () => {
+  it("shows an error when the URL is empty", async () => {
     const api = new MockSerenadeApi();
     const user = userEvent.setup();
     renderDialog(api);
 
     await user.click(screen.getByRole("button", { name: /add project/i }));
     expect(await screen.findByText(/enter a git repository url/i)).toBeInTheDocument();
+  });
+
+  it("rejects non-remote sources (Hand 0.6 contract)", async () => {
+    const api = new MockSerenadeApi();
+    const user = userEvent.setup();
+    renderDialog(api);
+
+    await user.type(screen.getByLabelText("Repository URL"), "C:\\dev\\local-repo");
+    await user.click(screen.getByRole("button", { name: /add project/i }));
+
+    expect(await screen.findByText(/only accepts remote urls/i)).toBeInTheDocument();
   });
 });
