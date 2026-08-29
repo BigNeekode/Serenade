@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "@/lib/api";
+import { useInteraction } from "@/hooks/use-interaction";
 import type { CreateTaskInput } from "@/types/domain";
 
 export const taskKeys = {
@@ -43,20 +44,20 @@ function useTaskMutationInvalidation() {
 }
 
 export function useCreateTask() {
-  const api = useApi();
+  const interaction = useInteraction();
   const invalidate = useTaskMutationInvalidation();
   return useMutation({
-    mutationFn: (input: CreateTaskInput) => api.createTask(input),
+    mutationFn: (input: CreateTaskInput) => interaction.createTask(input),
     onSuccess: (task) => invalidate(task.id),
   });
 }
 
 export function useSendTaskMessage() {
-  const api = useApi();
+  const interaction = useInteraction();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ taskId, message }: { taskId: string; message: string }) =>
-      api.sendTaskMessage(taskId, message),
+      interaction.sendTaskMessage(taskId, message),
     onSuccess: (_data, vars) => {
       void qc.invalidateQueries({ queryKey: taskKeys.detail(vars.taskId) });
       void qc.invalidateQueries({ queryKey: ["logs", vars.taskId] });
@@ -66,28 +67,28 @@ export function useSendTaskMessage() {
 }
 
 export function useRetryTask() {
-  const api = useApi();
+  const interaction = useInteraction();
   const invalidate = useTaskMutationInvalidation();
   return useMutation({
-    mutationFn: (taskId: string) => api.retryTask(taskId),
+    mutationFn: (taskId: string) => interaction.retryTask(taskId),
     onSuccess: (_data, taskId) => invalidate(taskId),
   });
 }
 
 export function useStopTask() {
-  const api = useApi();
+  const interaction = useInteraction();
   const invalidate = useTaskMutationInvalidation();
   return useMutation({
-    mutationFn: (taskId: string) => api.stopTask(taskId),
+    mutationFn: (taskId: string) => interaction.stopTask(taskId),
     onSuccess: (_data, taskId) => invalidate(taskId),
   });
 }
 
 export function usePromoteTask() {
-  const api = useApi();
+  const interaction = useInteraction();
   const invalidate = useTaskMutationInvalidation();
   return useMutation({
-    mutationFn: (taskId: string) => api.promoteTask(taskId),
+    mutationFn: (taskId: string) => interaction.promoteTask(taskId),
     onSuccess: (task) => invalidate(task.id),
   });
 }
