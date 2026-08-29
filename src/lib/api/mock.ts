@@ -813,6 +813,39 @@ export class MockSerenadeApi implements SerenadeApi {
     return clone(ship);
   }
 
+  async mergeTaskLocal(taskId: string): Promise<Task> {
+    await delay();
+    const task = this.taskStore.find((t) => t.id === taskId);
+    if (!task) throw new SerenadeApiError({ code: "TASK_NOT_FOUND", title: "Task not found", message: `No task with id ${taskId}.`, recoverable: false });
+    if (task.status !== "review") throw new SerenadeApiError({ code: "COMMAND_FAILED", title: "Task is not ready to merge", message: `${taskId} must be in review before merging.`, recoverable: true });
+    this.touch(task, "done");
+    this.event("task.merged", `${taskId} merged into the local default branch`, "success", { projectId: task.projectId, taskId });
+    return clone(task);
+  }
+
+  async deliverTask(taskId: string): Promise<Task> {
+    await delay();
+    const task = this.taskStore.find((t) => t.id === taskId);
+    if (!task) throw new SerenadeApiError({ code: "TASK_NOT_FOUND", title: "Task not found", message: `No task with id ${taskId}.`, recoverable: false });
+    if (task.status !== "review") throw new SerenadeApiError({ code: "COMMAND_FAILED", title: "Task is not ready to deliver", message: `${taskId} must be in review before delivery.`, recoverable: true });
+    this.touch(task, "done");
+    this.event("task.delivered", `${taskId} marked delivered`, "success", { projectId: task.projectId, taskId });
+    return clone(task);
+  }
+
+  async finalizeTask(taskId: string): Promise<void> {
+    await delay();
+    const task = this.taskStore.find((t) => t.id === taskId);
+    if (!task) throw new SerenadeApiError({ code: "TASK_NOT_FOUND", title: "Task not found", message: `No task with id ${taskId}.`, recoverable: false });
+    if (task.status !== "done") throw new SerenadeApiError({ code: "COMMAND_FAILED", title: "Task is not delivered", message: `${taskId} must be done before finalization.`, recoverable: true });
+    const agent = this.agentStore.find((a) => a.id === task.assignedAgentId);
+    if (agent) {
+      agent.status = "completed";
+      agent.endedAt = new Date().toISOString();
+    }
+    this.event("task.finalized", `${taskId} worker and worktree finalized`, "info", { projectId: task.projectId, taskId });
+  }
+
   // -- local tooling ---------------------------------------------------------------
 
   async cleanupWorktree(worktreeId: string): Promise<void> {

@@ -18,15 +18,36 @@ pub fn agent_id_for(task_id: &str, ordinal: i64) -> String {
 /// WorkerReport `done` claim do not complete an active Attempt. Terminal "done"
 /// is based on delivery/merge or Hand's Attempt lifecycle instead.
 pub fn derive_task_status(s: &StatusJson, held: bool) -> &'static str {
-    let reported = s.reported.as_ref().map(|r| r.state.as_str()).unwrap_or("");
+    derive_task_status_with_report(s, held, None)
+}
+
+fn derive_task_status_with_report<'a>(s: &'a StatusJson, held: bool, report_override: Option<&'a str>) -> &'static str {
+    let reported = report_override
+        .or_else(|| s.reported.as_ref().map(|r| r.state.as_str()))
+        .unwrap_or("");
     let attempt = s.attempt_lifecycle.as_deref().unwrap_or("");
     let open = s.task_lifecycle.as_deref().unwrap_or("open") == "open";
     let merged = s.merged.unwrap_or(false);
     let delivered = s.delivered_at.is_some();
 
+    // Delivery/merge are canonical operator facts even if the worker attempt
+    // has not been torn down yet. Present them as Done immediately so the UI
+    // does not leave accepted work in Review until cleanup.
+    if merged || delivered {
+        return "done";
+    }
+
     if open {
         if held || matches!(reported, "blocked" | "needs-decision") {
             return "blocked";
+        }
+        if matches!(reported, "done") {
+            // Actionable review state only; this does not claim canonical Task
+            // or Attempt completion while the provider pane remains alive.
+            return "review";
+        }
+        if matches!(reported, "failed") {
+            return "failed";
         }
         if matches!(attempt, "failed" | "interrupted") {
             return "failed";
@@ -39,15 +60,6 @@ pub fn derive_task_status(s: &StatusJson, held: bool) -> &'static str {
         if matches!(attempt, "completed") {
             return "review";
         }
-        if matches!(reported, "failed") {
-            // A report is still only a claim; use it here as a presentation
-            // warning when no stronger active lifecycle state exists.
-            return "failed";
-        }
-        if matches!(reported, "done") {
-            // Claim-driven actionability only; this does not make the Task done.
-            return "review";
-        }
         if matches!(reported, "paused") {
             return "blocked";
         }
@@ -56,7 +68,7 @@ pub fn derive_task_status(s: &StatusJson, held: bool) -> &'static str {
 
     // Terminal presentation follows Hand lifecycle/delivery facts rather than
     // a worker claim. This keeps `reported: done` distinct from completion.
-    if merged || delivered || matches!(attempt, "completed") {
+    if matches!(attempt, "completed") {
         return "done";
     }
     if matches!(attempt, "failed") {
@@ -118,6 +130,11 @@ pub fn to_task(s: &StatusJson, files: &FleetFiles, held: bool) -> Task {
         harness: s.harness.clone(),
         model: s.model.clone(),
     });
+    let report_state = files.latest_valid_report_state(&s.id);
+    let status = match report_state.as_deref() {
+        Some(state) => derive_task_status_with_report(s, held, Some(state)),
+        None => derive_task_status(s, held),
+    };
     Task {
         id: s.id.clone(),
         project_id: s.project.clone(),
@@ -128,7 +145,7 @@ pub fn to_task(s: &StatusJson, files: &FleetFiles, held: bool) -> Task {
             .execution_class
             .clone()
             .unwrap_or_else(|| "standard".to_string()),
-        status: derive_task_status(s, held).to_string(),
+        status: status.to_string(),
         tags: Vec::new(),
         assigned_agent_id: agent_id,
         worktree_id: s.worktree.as_ref().map(|_| s.id.clone()),
@@ -279,15 +296,35 @@ mod tests {
     }
 
     #[test]
-    fn worker_report_done_does_not_complete_running_attempt() {
+    fn worker_report_done_marks_running_attempt_ready_for_review() {
         let mut s = status("running", None);
         s.reported = Some(ReportedJson {
             state: "done".into(),
             note: "worker claims done".into(),
         });
-        // A WorkerReport `done` claim is not lifecycle completion while the
-        // Attempt is still running.
-        assert_eq!(derive_task_status(&s, false), "in_progress");
+        // Review is presentation actionability, not lifecycle completion.
+        assert_eq!(derive_task_status(&s, false), "review");
+    }
+
+    #[test]
+    fn delivery_moves_an_open_running_task_to_done_before_teardown() {
+        let mut s = status("running", Some("idle"));
+        s.reported = Some(ReportedJson {
+            state: "done".into(),
+            note: "ready for review".into(),
+        });
+        s.delivered_at = Some("2026-08-29T14:48:41Z".into());
+        assert_eq!(derive_task_status(&s, false), "done");
+    }
+
+    #[test]
+    fn valid_report_override_recovers_from_malformed_hand_projection() {
+        let mut s = status("running", None);
+        s.reported = Some(ReportedJson {
+            state: String::new(),
+            note: "unprefixed continuation".into(),
+        });
+        assert_eq!(derive_task_status_with_report(&s, false, Some("done")), "review");
     }
 
     #[test]

@@ -53,6 +53,9 @@ export interface SerenadeApi {
   retryTask(taskId: string): Promise<void>;
   stopTask(taskId: string): Promise<void>;
   promoteTask(taskId: string): Promise<Task>;
+  mergeTaskLocal(taskId: string): Promise<Task>;
+  deliverTask(taskId: string): Promise<Task>;
+  finalizeTask(taskId: string): Promise<void>;
 
   // Local tooling
   cleanupWorktree(worktreeId: string): Promise<void>;

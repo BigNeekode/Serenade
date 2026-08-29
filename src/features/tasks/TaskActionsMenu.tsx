@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { MoreHorizontal, RotateCcw, Square, ArrowUpRight, GitBranch, TerminalSquare, ExternalLink } from "lucide-react";
+import { MoreHorizontal, RotateCcw, Square, ArrowUpRight, GitBranch, TerminalSquare, ExternalLink, GitMerge, PackageCheck, Archive } from "lucide-react";
 import { Dropdown, DropdownItem, DropdownSeparator } from "@/components/ui/dropdown";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/toast";
-import { useRetryTask, useStopTask } from "@/hooks/use-tasks";
+import { useDeliverTask, useFinalizeTask, useMergeTaskLocal, useRetryTask, useStopTask } from "@/hooks/use-tasks";
 import { useOpenWorktree, useWorktrees } from "@/hooks/use-worktrees";
 import type { Task } from "@/types/domain";
 
@@ -14,12 +14,22 @@ export function TaskActionsMenu({ task }: { task: Task }) {
   const retry = useRetryTask();
   const stop = useStopTask();
   const openWorktree = useOpenWorktree();
+  const mergeLocal = useMergeTaskLocal();
+  const deliver = useDeliverTask();
+  const finalize = useFinalizeTask();
   const { data: worktrees } = useWorktrees();
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmRetry, setConfirmRetry] = useState(false);
+  const [confirmMerge, setConfirmMerge] = useState(false);
+  const [confirmDeliver, setConfirmDeliver] = useState(false);
+  const [confirmFinalize, setConfirmFinalize] = useState(false);
 
   const worktree = worktrees?.find((w) => w.id === task.worktreeId);
-  const retryable = task.status === "failed" || task.status === "stopped" || task.status === "blocked";
+  const retryable =
+    task.status === "failed" ||
+    task.status === "stopped" ||
+    task.status === "blocked" ||
+    task.lineage?.activeAttempt?.lifecycle === "provisioning";
   const stoppable =
     task.status === "in_progress" || task.status === "scouting" || task.status === "queued" || task.status === "ready";
 
@@ -89,6 +99,43 @@ export function TaskActionsMenu({ task }: { task: Task }) {
               Stop worker
             </DropdownItem>
             <DropdownSeparator />
+            {task.status === "review" && (
+              <>
+                <DropdownItem
+                  icon={<GitMerge size={13} />}
+                  onClick={() => {
+                    setConfirmMerge(true);
+                    close();
+                  }}
+                >
+                  Merge into main
+                </DropdownItem>
+                <DropdownItem
+                  icon={<PackageCheck size={13} />}
+                  onClick={() => {
+                    setConfirmDeliver(true);
+                    close();
+                  }}
+                >
+                  Mark delivered
+                </DropdownItem>
+                <DropdownSeparator />
+              </>
+            )}
+            {task.status === "done" && (
+              <>
+                <DropdownItem
+                  icon={<Archive size={13} />}
+                  onClick={() => {
+                    setConfirmFinalize(true);
+                    close();
+                  }}
+                >
+                  Finalize task
+                </DropdownItem>
+                <DropdownSeparator />
+              </>
+            )}
             {worktree && (
               <>
                 <DropdownItem
@@ -166,6 +213,60 @@ export function TaskActionsMenu({ task }: { task: Task }) {
             onSuccess: () => {
               toast.showToast({ variant: "success", title: `Retry started for ${task.id}` });
               setConfirmRetry(false);
+            },
+            onError,
+          });
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmMerge}
+        onClose={() => setConfirmMerge(false)}
+        title={`Merge ${task.id} into main?`}
+        description="Hand will perform a safe local merge and refuse if the branch cannot be landed cleanly. Review the task changes first."
+        confirmLabel="Merge into main"
+        loading={mergeLocal.isPending}
+        onConfirm={() => {
+          mergeLocal.mutate(task.id, {
+            onSuccess: () => {
+              toast.showToast({ variant: "success", title: `Task ${task.id} merged` });
+              setConfirmMerge(false);
+            },
+            onError,
+          });
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmDeliver}
+        onClose={() => setConfirmDeliver(false)}
+        title={`Mark ${task.id} delivered?`}
+        description="Use this when the reviewed branch is handed off and another person or integration task controls whether it lands. This does not merge into main."
+        confirmLabel="Mark delivered"
+        loading={deliver.isPending}
+        onConfirm={() => {
+          deliver.mutate(task.id, {
+            onSuccess: () => {
+              toast.showToast({ variant: "success", title: `Task ${task.id} delivered` });
+              setConfirmDeliver(false);
+            },
+            onError,
+          });
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmFinalize}
+        onClose={() => setConfirmFinalize(false)}
+        title={`Finalize ${task.id}?`}
+        description="This closes the worker pane and returns the worktree. Hand will refuse if the work has not been merged or explicitly delivered."
+        confirmLabel="Finalize task"
+        loading={finalize.isPending}
+        onConfirm={() => {
+          finalize.mutate(task.id, {
+            onSuccess: () => {
+              toast.showToast({ variant: "success", title: `Task ${task.id} finalized` });
+              setConfirmFinalize(false);
             },
             onError,
           });

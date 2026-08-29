@@ -63,6 +63,16 @@ impl FleetFiles {
         }
     }
 
+    /// Latest syntactically valid Hand 0.6 WorkerReport state. Malformed
+    /// continuation/detail lines must not hide an earlier valid terminal claim.
+    pub fn latest_valid_report_state(&self, task_id: &str) -> Option<String> {
+        self.read_status_lines(task_id)
+            .ok()?
+            .into_iter()
+            .rev()
+            .find_map(|line| report_state_from_line(&line).map(str::to_string))
+    }
+
     /// Write the brief. Fails if the task already has one (precondition-style).
     /// `execution_class` is accepted for API symmetry but intentionally not
     /// written (see comment at the body below).
@@ -104,15 +114,7 @@ impl FleetFiles {
         // fall back to the fleet's configured default harness (legacy routing),
         // which is what the GUI offers. Profiles/routes can be used later by
         // passing --profile at spawn.
-        let mut body = String::new();
-        body.push_str(&format!("# {title}\n\n"));
-        if let Some(desc) = description {
-            body.push_str(desc.trim());
-            body.push_str("\n\n");
-        }
-        if !tags.is_empty() {
-            body.push_str(&format!("tags: {}\n", tags.join(", ")));
-        }
+        let body = render_brief(task_id, title, description, tags, &self.status_file(task_id));
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| {
                 SerenadeError::new(Code::PermissionDenied, "Could not create brief directory", e.to_string())
@@ -175,6 +177,37 @@ impl FleetFiles {
     }
 }
 
+/// Render the minimum worker identity/reporting contract into every GUI brief.
+fn render_brief(
+    task_id: &str,
+    title: &str,
+    description: Option<&str>,
+    tags: &[String],
+    status_path: &Path,
+) -> String {
+    let mut body = format!("# {title}\n\nTask ID: `{task_id}`\n\n");
+    if let Some(desc) = description {
+        body.push_str(desc.trim());
+        body.push_str("\n\n");
+    }
+    if !tags.is_empty() {
+        body.push_str(&format!("tags: {}\n\n", tags.join(", ")));
+    }
+    body.push_str("## Worker reporting\n\n");
+    body.push_str("This brief and task ID are authoritative. Do not report to a related or older task even if you inspect its brief.\n\n");
+    body.push_str(&format!("Append worker status lines only to `{}`.\n\n", status_path.display()));
+    body.push_str("Every non-empty status line must be a complete single-line entry beginning with exactly one of these prefixes: `working:`, `paused:`, `blocked:`, `needs-decision:`, `done:`, or `failed:`. Do not append unprefixed headings, lists, or continuation lines. Put the full final summary on one final `done:` or `failed:` line before ending the worker turn.\n");
+    body.push_str("Before reporting `done:`, verify the intended deliverables are committed on a named branch (not detached HEAD), the worktree has no unintended changes, and include the branch name and commit SHA in the final status line.\n");
+    body
+}
+
+fn report_state_from_line(line: &str) -> Option<&str> {
+    let (state, _) = line.split_once(':')?;
+    let state = state.trim();
+    matches!(state, "working" | "paused" | "blocked" | "needs-decision" | "done" | "failed")
+        .then_some(state)
+}
+
 pub fn strip_front_matter(raw: &str) -> &str {
     let trimmed = raw.trim_start();
     if let Some(rest) = trimmed.strip_prefix("---") {
@@ -231,4 +264,33 @@ pub fn file_mtime(path: &Path) -> Option<String> {
         .and_then(|m| m.modified())
         .ok()
         .map(iso_from_system_time)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rendered_brief_pins_task_identity_and_report_path() {
+        let body = render_brief(
+            "task-current",
+            "Current task",
+            Some("Do the work."),
+            &["frontend".to_string()],
+            Path::new(r"D:\Fleet\state\task-current.status"),
+        );
+        assert!(body.contains("Task ID: `task-current`"));
+        assert!(body.contains(r"`D:\Fleet\state\task-current.status`"));
+        assert!(body.contains("Do not report to a related or older task"));
+        assert!(body.contains("Do not append unprefixed headings"));
+        assert!(body.contains("committed on a named branch"));
+    }
+
+    #[test]
+    fn report_state_parser_ignores_unprefixed_detail_lines() {
+        assert_eq!(report_state_from_line("done: shipped"), Some("done"));
+        assert_eq!(report_state_from_line("needs-decision: choose API"), Some("needs-decision"));
+        assert_eq!(report_state_from_line("Deliverables:"), None);
+        assert_eq!(report_state_from_line("- file created"), None);
+    }
 }

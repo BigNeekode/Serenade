@@ -92,3 +92,30 @@ export function usePromoteTask() {
     onSuccess: (task) => invalidate(task.id),
   });
 }
+
+export function useMergeTaskLocal() {
+  const interaction = useInteraction();
+  const invalidate = useTaskMutationInvalidation();
+  return useMutation({
+    mutationFn: (taskId: string) => interaction.mergeTaskLocal(taskId),
+    onSuccess: (task) => invalidate(task.id),
+  });
+}
+
+export function useDeliverTask() {
+  const interaction = useInteraction();
+  const invalidate = useTaskMutationInvalidation();
+  return useMutation({
+    mutationFn: (taskId: string) => interaction.deliverTask(taskId),
+    onSuccess: (task) => invalidate(task.id),
+  });
+}
+
+export function useFinalizeTask() {
+  const interaction = useInteraction();
+  const invalidate = useTaskMutationInvalidation();
+  return useMutation({
+    mutationFn: (taskId: string) => interaction.finalizeTask(taskId),
+    onSuccess: (_data, taskId) => invalidate(taskId),
+  });
+}

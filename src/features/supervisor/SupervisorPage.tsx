@@ -118,7 +118,7 @@ export function SupervisorPage() {
   const interaction = useMemo(() => new InteractionGateway(api), [api]);
   const toast = useToast();
   const { data: projects } = useProjects();
-  const { getSupervisorChat, setSupervisorChat, appendSupervisorMessage, selectedProjectId } = useUiStore();
+  const { getSupervisorChat, setSupervisorChat, markSupervisorTaskCreated, appendSupervisorMessage, selectedProjectId } = useUiStore();
   const [scope, setScope] = useState<string>(() =>
     selectedProjectId ?? FLEET_SCOPE,
   );
@@ -187,7 +187,7 @@ export function SupervisorPage() {
 
   // Exact typed-action path: approval dispatches directly through Hand's
   // mutation adapter. It does not spend another Supervisor/LLM turn.
-  const spawn = async (proposal: TaskProposal) => {
+  const spawn = async (proposal: TaskProposal): Promise<boolean> => {
     setBusyTitles((s) => new Set(s).add(proposal.title));
     try {
       const task = await interaction.createTask({
@@ -198,15 +198,13 @@ export function SupervisorPage() {
         executionClass: proposal.executionClass,
         tags: proposal.tags,
       });
-      setSupervisorChat(scope, {
-        ...chat,
-        createdTitles: [...chat.createdTitles, proposal.title],
-      });
+      markSupervisorTaskCreated(scope, proposal.title);
       toast.showToast({
         variant: "success",
         title: `Worker dispatched: ${task.id}`,
         description: proposal.title,
       });
+      return true;
     } catch (err) {
       const appErr = toAppError(err);
       toast.showToast({
@@ -214,12 +212,24 @@ export function SupervisorPage() {
         title: appErr.title,
         description: appErr.message,
       });
+      return false;
     } finally {
       setBusyTitles((s) => {
         const next = new Set(s);
         next.delete(proposal.title);
         return next;
       });
+    }
+  };
+
+  const spawnAll = async () => {
+    // Hand 0.6 provisioning mutates shared Fleet/Treehouse/Herdr state. Keep
+    // bulk approval ordered so each launch either confirms or fails before the
+    // next task starts.
+    for (const proposal of proposals) {
+      if (createdSet.has(proposal.title)) continue;
+      const succeeded = await spawn(proposal);
+      if (!succeeded) break;
     }
   };
 
@@ -330,11 +340,8 @@ export function SupervisorPage() {
                 <Button
                   variant="secondary"
                   size="xs"
-                  onClick={() => {
-                    for (const proposal of proposals) {
-                      if (!createdSet.has(proposal.title)) void spawn(proposal);
-                    }
-                  }}
+                  disabled={busyTitles.size > 0}
+                  onClick={() => void spawnAll()}
                 >
                   Approve all
                 </Button>

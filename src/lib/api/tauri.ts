@@ -121,6 +121,18 @@ export class TauriSerenadeApi implements SerenadeApi {
     await this.hand.assertMutationCompatible();
     return invoke("task_promote", { taskId });
   }
+  async mergeTaskLocal(taskId: string): Promise<Task> {
+    await this.hand.assertMutationCompatible();
+    return invoke("task_merge_local", { taskId });
+  }
+  async deliverTask(taskId: string): Promise<Task> {
+    await this.hand.assertMutationCompatible();
+    return invoke("task_deliver", { taskId });
+  }
+  async finalizeTask(taskId: string): Promise<void> {
+    await this.hand.assertMutationCompatible();
+    return invoke("task_finalize", { taskId });
+  }
 
   async cleanupWorktree(worktreeId: string): Promise<void> {
     await this.hand.assertMutationCompatible();

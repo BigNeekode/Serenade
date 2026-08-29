@@ -45,6 +45,18 @@ export class InteractionGateway {
     return this.api.promoteTask(taskId);
   }
 
+  mergeTaskLocal(taskId: string): Promise<Task> {
+    return this.api.mergeTaskLocal(taskId);
+  }
+
+  deliverTask(taskId: string): Promise<Task> {
+    return this.api.deliverTask(taskId);
+  }
+
+  finalizeTask(taskId: string): Promise<void> {
+    return this.api.finalizeTask(taskId);
+  }
+
   cleanupWorktree(worktreeId: string): Promise<void> {
     return this.api.cleanupWorktree(worktreeId);
   }

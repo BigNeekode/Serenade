@@ -958,6 +958,49 @@ async fn task_promote(task_id: String) -> Result<Task, SerenadeError> {
 }
 
 #[tauri::command]
+async fn task_merge_local(task_id: String) -> Result<Task, SerenadeError> {
+    let (_, runner, files) = setup()?;
+    runner.assert_workflow_mutation_compatible()?;
+    // Hand performs the landed-work and fast-forward safety checks. Serenade
+    // deliberately exposes no force variant for this operator action.
+    runner.expect(&["merge", &task_id, "--local"], 180)?;
+    invalidate_fleet_cache();
+    let gateway = HandLegacyGateway::new(runner);
+    let s = gateway.task_status(&task_id)?;
+    Ok(adapter::to_task(&s, &files, s.held.is_some()))
+}
+
+#[tauri::command]
+async fn task_deliver(task_id: String) -> Result<Task, SerenadeError> {
+    let (_, runner, files) = setup()?;
+    runner.assert_workflow_mutation_compatible()?;
+    runner.expect(
+        &[
+            "deliver",
+            &task_id,
+            "--reason",
+            "Reviewed and accepted in Serenade; landing is handled separately",
+        ],
+        30,
+    )?;
+    invalidate_fleet_cache();
+    let gateway = HandLegacyGateway::new(runner);
+    let s = gateway.task_status(&task_id)?;
+    Ok(adapter::to_task(&s, &files, s.held.is_some()))
+}
+
+#[tauri::command]
+async fn task_finalize(task_id: String) -> Result<(), SerenadeError> {
+    let (_, runner, _) = setup()?;
+    runner.assert_workflow_mutation_compatible()?;
+    // Intentionally no --force: Hand must refuse if work is not landed or
+    // explicitly delivered. Finalize is cleanup, never a discard action.
+    runner.expect(&["teardown", &task_id], 120)?;
+    invalidate_fleet_cache();
+    Ok(())
+}
+
+#[tauri::command]
 async fn worktree_cleanup(worktree_id: String) -> Result<(), SerenadeError> {
     let (_, runner, _) = setup()?;
     runner.assert_workflow_mutation_compatible()?;
@@ -1160,6 +1203,9 @@ pub fn run() {
             task_retry,
             task_stop,
             task_promote,
+            task_merge_local,
+            task_deliver,
+            task_finalize,
             worktree_cleanup,
             worktree_open_editor,
             worktree_open_folder,

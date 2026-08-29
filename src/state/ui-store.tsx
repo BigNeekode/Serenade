@@ -34,6 +34,7 @@ interface UiState {
   supervisorChats: Record<string, SupervisorChatState>;
   getSupervisorChat: (scope: string) => SupervisorChatState;
   setSupervisorChat: (scope: string, state: SupervisorChatState) => void;
+  markSupervisorTaskCreated: (scope: string, title: string) => void;
   /** Functional append — safe from async callbacks because it never reads a stale snapshot. */
   appendSupervisorMessage: (scope: string, message: SupervisorChatMessage) => void;
 }
@@ -101,6 +102,20 @@ export function UiStoreProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const markSupervisorTaskCreated = useCallback((scope: string, title: string) => {
+    setSupervisorChats((chats) => {
+      const chat = chats[scope] ?? { messages: [], createdTitles: [], counter: 0 };
+      if (chat.createdTitles.includes(title)) return chats;
+      return {
+        ...chats,
+        [scope]: {
+          ...chat,
+          createdTitles: [...chat.createdTitles, title],
+        },
+      };
+    });
+  }, []);
+
   const selectTask = useCallback((id: string | null) => {
     setSelectedTaskId(id);
     if (id) setSelectedAgentId(null);
@@ -128,6 +143,7 @@ export function UiStoreProvider({ children }: { children: ReactNode }) {
         supervisorChats,
         getSupervisorChat,
         setSupervisorChat,
+        markSupervisorTaskCreated,
         appendSupervisorMessage,
       }}
     >
