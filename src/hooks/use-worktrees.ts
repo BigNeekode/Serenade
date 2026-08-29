@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "@/lib/api";
+import { useInteraction } from "@/hooks/use-interaction";
 
 export function useWorktrees(projectId?: string) {
   const api = useApi();
@@ -11,10 +12,10 @@ export function useWorktrees(projectId?: string) {
 }
 
 export function useCleanupWorktree() {
-  const api = useApi();
+  const interaction = useInteraction();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (worktreeId: string) => api.cleanupWorktree(worktreeId),
+    mutationFn: (worktreeId: string) => interaction.cleanupWorktree(worktreeId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["worktrees"] });
       void qc.invalidateQueries({ queryKey: ["events"] });
