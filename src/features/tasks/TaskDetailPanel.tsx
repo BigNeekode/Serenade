@@ -16,6 +16,8 @@ export function TaskDetailPanel({ taskId }: { taskId: string }) {
   if (task.isLoading || !task.data) return <div className="space-y-3 p-4"><Skeleton className="h-5 w-3/4" /><Skeleton className="h-20" /></div>;
 
   const t = task.data;
+  const plan = t.lineage?.plan;
+  const attempt = t.lineage?.activeAttempt;
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -45,6 +47,53 @@ export function TaskDetailPanel({ taskId }: { taskId: string }) {
         )}
         {t.description && (
           <p className="line-clamp-4 text-xs leading-relaxed text-fg-muted">{t.description}</p>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-line bg-panel p-3 text-xs">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-fg-subtle">Lineage</p>
+          <span className="text-[10px] text-fg-subtle">
+            {t.lineage?.source === "canonical" ? "canonical" : "legacy projection"}
+          </span>
+        </div>
+        <div className="grid gap-y-1.5">
+          <div className="flex justify-between gap-3">
+            <span className="text-fg-subtle">Task</span>
+            <Mono className="text-[10px]">{t.id}</Mono>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-fg-subtle">Plan</span>
+            {plan ? (
+              <span className="font-mono text-[11px] text-fg-muted">{plan.id}</span>
+            ) : (
+              <span className="text-right text-fg-subtle">unavailable on legacy Hand</span>
+            )}
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-fg-subtle">Active Attempt</span>
+            {attempt ? (
+              <span className="text-right text-fg-muted">
+                ordinal {attempt.ordinal}
+                {attempt.lifecycle ? ` · ${attempt.lifecycle}` : ""}
+              </span>
+            ) : (
+              <span className="text-fg-subtle">none reported</span>
+            )}
+          </div>
+          {attempt && (attempt.harness || attempt.model) && (
+            <div className="flex justify-between gap-3">
+              <span className="text-fg-subtle">Attempt runtime</span>
+              <span className="text-right text-fg-muted">
+                {[attempt.harness, attempt.model].filter(Boolean).join(" / ")}
+              </span>
+            </div>
+          )}
+        </div>
+        {!plan && (
+          <p className="mt-2 border-t border-line pt-2 text-[10px] leading-relaxed text-fg-subtle">
+            Serenade does not infer a Plan from the legacy brief/task fields. Hand 0.8 can fill this slot when its canonical Plan projection is released.
+          </p>
         )}
       </div>
 
