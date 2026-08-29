@@ -1,5 +1,5 @@
 use crate::error::SerenadeError;
-use crate::hand::compatibility::{self, HandCompatibility};
+use crate::hand::compatibility::{self, HandCompatibility, HandContract};
 use crate::hand::HandRunner;
 use std::path::Path;
 
@@ -44,14 +44,21 @@ impl HandLegacyGateway {
 
     /// Presentation-side read-only context for a Supervisor turn.
     ///
-    /// Prefer the 0.7+ `orient` contract. Legacy 0.6 lacks it, so session start
-    /// is the compatibility fallback. This does not replace the actual
-    /// Supervisor Harness requirement to orient in its own runtime before
-    /// reasoning/action.
+    /// Verified Hand 0.6 goes straight to its legacy session-start context so
+    /// Serenade does not probe a command that is known not to exist. Transition
+    /// and newer/unknown contracts prefer `orient`; session start remains a
+    /// compatibility fallback only. This is supplemental to the actual
+    /// Supervisor Harness's own orientation obligation.
     pub fn fresh_supervisor_context(
         &self,
         cwd: &Path,
     ) -> Option<(SupervisorContextSource, String)> {
+        let contract = self.compatibility().ok().map(|c| c.contract);
+
+        if contract == Some(HandContract::Legacy06) {
+            return self.legacy_session_context(cwd);
+        }
+
         if let Ok(text) = self.runner.expect_in(&["orient"], 20, cwd) {
             let text = text.trim().to_string();
             if !text.is_empty() {
@@ -59,15 +66,15 @@ impl HandLegacyGateway {
             }
         }
 
+        self.legacy_session_context(cwd)
+    }
+
+    fn legacy_session_context(&self, cwd: &Path) -> Option<(SupervisorContextSource, String)> {
         self.runner
             .expect_in(&["session", "start"], 20, cwd)
             .ok()
             .map(|text| text.trim().to_string())
             .filter(|text| !text.is_empty())
             .map(|text| (SupervisorContextSource::LegacySessionStart, text))
-    }
-
-    pub fn into_runner(self) -> HandRunner {
-        self.runner
     }
 }
