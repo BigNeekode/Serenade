@@ -77,6 +77,49 @@ fn fresh_hand_context(cwd: &PathBuf) -> Option<(&'static str, String)> {
         .map(|(source, context)| (source.label(), context))
 }
 
+/// Build the process for one explicitly qualified Supervisor Harness adapter.
+///
+/// Worker routing is intentionally unrelated to this selection. Adding a new
+/// value here requires verifying that Harness's headless invocation, session
+/// resume, output parsing, cwd behavior, and Hand supervisor-runtime contract.
+fn qualified_harness_command(
+    harness: &str,
+    session_id: Option<&str>,
+    cwd: &PathBuf,
+    turn_prompt: &str,
+) -> Result<Command, SerenadeError> {
+    match harness {
+        "opencode" => {
+            let mut cmd = Command::new("opencode");
+            cmd.args(["run", "--format", "json"])
+                .current_dir(cwd)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .stdin(Stdio::null());
+            if let Some(id) = session_id {
+                cmd.args(["--session", id]);
+            }
+            cmd.arg(turn_prompt);
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(CREATE_NO_WINDOW);
+            }
+            Ok(cmd)
+        }
+        other => Err(SerenadeError::new(
+            Code::UnsupportedCapability,
+            "Supervisor Harness not qualified",
+            format!(
+                "Serenade has no verified Supervisor Harness runtime adapter for {other:?}."
+            ),
+        )
+        .with_action(
+            "Select OpenCode as the Supervisor Harness until another runtime adapter is explicitly qualified.",
+        )),
+    }
+}
+
 /// First-turn conversation framing. `fleet_json` and `projects_json` are kept in
 /// the signature temporarily so the 0.6 Tauri caller can migrate independently,
 /// but they are intentionally ignored: manually assembled Serenade snapshots
@@ -129,9 +172,9 @@ Operator: {message}"#,
     )
 }
 
-/// Run `opencode run --format json [--session <id>] <message>` in the selected
-/// fleet/project scope. Every turn receives a best-effort fresh Hand preflight
-/// and an explicit instruction to orient inside the actual provider runtime.
+/// Run one turn through the selected, explicitly qualified Supervisor Harness.
+/// Every turn receives a best-effort fresh Hand preflight and an explicit
+/// instruction to orient inside the actual provider runtime.
 pub fn run_supervisor_turn(
     message: &str,
     session_id: Option<&str>,
@@ -156,38 +199,28 @@ pub fn run_supervisor_turn(
         ),
     };
 
-    let mut cmd = Command::new("opencode");
-    cmd.args(["run", "--format", "json"])
-        .current_dir(cwd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .stdin(Stdio::null());
-    if let Some(id) = session_id {
-        cmd.args(["--session", id]);
-    }
-    cmd.arg(&turn_prompt);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW); // no console flash
-    }
+    let (config, _, _) = crate::setup()?;
+    let harness = config.supervisor_harness.clone();
+    let mut cmd = qualified_harness_command(&harness, session_id, cwd, &turn_prompt)?;
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(SerenadeError::new(
                 Code::HandNotFound,
-                "opencode not found",
-                "Serenade Supervisor chat currently runs through OpenCode, but `opencode` is not on PATH.",
+                "Supervisor Harness executable not found",
+                format!(
+                    "The qualified Serenade Supervisor Harness {harness:?} is not available on PATH."
+                ),
             )
             .with_action(
-                "Install OpenCode and ensure `opencode` is on PATH. Worker routes may still use other Hand-supported harnesses.",
+                "Install the selected Supervisor Harness and ensure its executable is on PATH.",
             ));
         }
         Err(e) => {
             return Err(SerenadeError::new(
                 Code::CommandFailed,
-                "Could not launch supervisor",
+                "Could not launch Supervisor Harness",
                 e.to_string(),
             ));
         }
@@ -219,7 +252,7 @@ pub fn run_supervisor_turn(
                 let stderr = String::from_utf8_lossy(&stderr_bytes).into_owned();
                 return Err(SerenadeError::new(
                     Code::CommandFailed,
-                    "Supervisor agent failed",
+                    "Supervisor Harness failed",
                     truncate(stderr, 2000),
                 ));
             }
@@ -228,7 +261,7 @@ pub fn run_supervisor_turn(
                 return Err(SerenadeError::new(
                     Code::ParseFailed,
                     "Supervisor returned no reply",
-                    "The headless agent finished without text output.",
+                    "The Supervisor Harness finished without text output.",
                 )
                 .with_detail(format!(
                     "stdout (first 2000 chars): {}",
@@ -243,7 +276,7 @@ pub fn run_supervisor_turn(
             Err(SerenadeError::new(
                 Code::CommandFailed,
                 "Supervisor timed out",
-                format!("The supervisor agent did not reply within {SUPERVISOR_TIMEOUT_SECS}s."),
+                format!("The Supervisor Harness did not reply within {SUPERVISOR_TIMEOUT_SECS}s."),
             ))
         }
         Err(e) => Err(SerenadeError::new(
@@ -303,5 +336,17 @@ mod tests {
         let prompt = build_first_turn_prompt("S", "{}", "[]", "go", Some("Kanvas-Kosong-Web"));
         assert!(prompt.contains("project **Kanvas-Kosong-Web** specifically"));
         assert!(prompt.contains("set every proposed task's `project` to \"Kanvas-Kosong-Web\""));
+    }
+
+    #[test]
+    fn unqualified_harness_fails_before_spawn() {
+        let err = qualified_harness_command(
+            "claude",
+            None,
+            &PathBuf::from("."),
+            "hello",
+        )
+        .expect_err("unqualified harness must fail closed");
+        assert_eq!(err.code, "UNSUPPORTED_CAPABILITY");
     }
 }
