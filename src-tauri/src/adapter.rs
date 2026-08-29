@@ -90,6 +90,15 @@ pub fn derive_agent_status(s: &StatusJson) -> &'static str {
     }
 }
 
+/// Retry policy for the Hand 0.6 recovery contract: a spawn that failed
+/// mid-launch (harness never confirmed — e.g. the herdr pane never started
+/// the worker) leaves the active attempt in `provisioning`, and `hand
+/// reopen` refuses until `hand reconcile` unwinds it. Retrying such a task
+/// must reconcile first (docs/hand-integration-notes.md §10.5).
+pub fn needs_reconcile_before_reopen(attempt_lifecycle: Option<&str>) -> bool {
+    attempt_lifecycle == Some("provisioning")
+}
+
 pub fn to_task(s: &StatusJson, files: &FleetFiles, held: bool) -> Task {
     let title = files
         .brief_title(&s.id)
@@ -239,6 +248,16 @@ mod tests {
         let s = status("running", Some("done"));
         assert_eq!(derive_agent_status(&s), "waiting");
         assert_eq!(derive_task_status(&s, false), "in_progress");
+    }
+
+    #[test]
+    fn provisioning_attempts_need_reconcile_before_reopen() {
+        // Mid-launch spawn failures wedge the attempt in provisioning; plain
+        // `hand reopen` refuses until `hand reconcile` unwinds it.
+        assert!(needs_reconcile_before_reopen(Some("provisioning")));
+        assert!(!needs_reconcile_before_reopen(Some("running")));
+        assert!(!needs_reconcile_before_reopen(Some("failed")));
+        assert!(!needs_reconcile_before_reopen(None));
     }
 
     #[test]

@@ -406,6 +406,8 @@ Then reload herdr:
 herdr server reload-config
 ```
 
+A spawn that failed this way leaves the task stuck in `provisioning` with no worker activity. Serenade's **Retry** detects this and runs `hand reconcile` before `hand reopen` automatically, so after fixing the shell, just retry the task.
+
 See [`docs/hand-integration-notes.md`](docs/hand-integration-notes.md) for the verified Windows notes.
 
 ### Claude worker pauses on a trust/security dialog

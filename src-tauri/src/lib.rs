@@ -721,6 +721,15 @@ async fn task_logs_read(
                     let model = s.model.as_deref().unwrap_or("default model");
                     synth.push(format!("worker dispatched: {h} ({model})"));
                 }
+                if s.attempt_lifecycle.as_deref() == Some("provisioning") {
+                    synth.push(
+                        "worker launch in progress (provisioning): the pane opened but the \
+                         harness has not confirmed yet — if this takes more than a couple of \
+                         minutes, herdr's default shell must be Git Bash (see README: worker \
+                         spawn hangs at a >> prompt)"
+                            .to_string(),
+                    );
+                }
                 match s.agent_state.as_deref() {
                     Some("done") => synth.push(
                         "agent finished its turn (herdr: done) but wrote no report line — \
@@ -911,6 +920,17 @@ async fn task_send_message(task_id: String, message: String) -> Result<(), Seren
 async fn task_retry(task_id: String) -> Result<(), SerenadeError> {
     let (_, runner, _) = setup()?;
     runner.assert_workflow_mutation_compatible()?;
+    // Hand 0.6 recovery contract: a spawn that failed mid-launch (harness
+    // never confirmed — e.g. the herdr pane never started the worker) leaves
+    // the attempt in `provisioning`, and `hand reopen` refuses until
+    // `hand reconcile` unwinds it. Reconcile automatically so Retry works.
+    let gateway = HandLegacyGateway::new(runner.clone());
+    if let Ok(status) = gateway.task_status(&task_id) {
+        if adapter::needs_reconcile_before_reopen(status.attempt_lifecycle.as_deref()) {
+            runner.expect(&["reconcile", &task_id], 120)?;
+            invalidate_fleet_cache();
+        }
+    }
     runner.expect(&["reopen", &task_id], 180)?;
     invalidate_fleet_cache();
     Ok(())
