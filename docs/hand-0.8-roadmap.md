@@ -3,8 +3,9 @@
 > **Purpose:** living tracker for adapting Serenade to Secondhand / `hand` 0.8 without coupling the GUI to unfinished Hand internals.
 >
 > **Last reviewed:** 2026-08-29  
-> **Implementation branch:** `chore/post-hand-alignment-stabilization`  
+> **Current integration state:** alignment + stabilization merged to `main`  
 > **Verified production baseline:** Hand 0.6.x  
+> **CI:** `.github/workflows/ci.yml` — frontend typecheck/tests/build + Rust check/tests  
 > **Upstream 0.8 status:** architecture/spec work in progress; do not implement guessed v19 persistence/read-model details.
 
 ---
@@ -32,13 +33,14 @@ Serenade Interaction
                                                      Worker Harness
 ```
 
-Canonical rule:
+Canonical invariants:
 
 ```text
 Serenade presentation state ≠ workflow truth
 Serenade chat history       ≠ workflow truth
 Supervisor provider session ≠ workflow truth
 Worker/agent "done"         ≠ lifecycle completion
+WorkerReport "done"         ≠ lifecycle completion
 
 Hand canonical state + exact external evidence + Hand currentness validation
 = workflow truth
@@ -65,10 +67,10 @@ Current architectural facts:
 4. Supervisor Harness and Worker Harness are semantically distinct roles.
 5. Supervisor runtime/session identity is ephemeral, not a Fleet workflow entity.
 6. `hand orient` reconstructs fresh bounded Supervisor truth every reasoning/wake turn.
-7. WorkerReport/agent/provider state is distinct from lifecycle/currentness.
+7. WorkerReport/provider state is distinct from lifecycle/currentness.
 8. Fresh v19 replaces Treehouse execution with native Git `WorktreeBinding`.
 9. Session/provider mechanics remain below Serenade.
-10. `#339` remains blocked on the exact `#344` relock; Serenade must not invent a private v19 model meanwhile.
+10. Serenade must not invent private v19 workflow truth while upstream contracts are still moving.
 
 ---
 
@@ -83,157 +85,23 @@ Until each release line is explicitly qualified:
 | `0.8.x+` | `v0.8-unadapted` | **blocked** until canonical adapter is verified |
 | older / unparsable / unknown | `unknown` | **blocked** |
 
-Read-only diagnostics should remain available where safe. Unknown/new contracts fail closed rather than silently issuing legacy mutations.
+Read-only diagnostics remain available where safe. Unknown/new contracts fail closed rather than silently issuing legacy mutations.
+
+Compatibility checks exist at multiple boundaries on purpose:
+
+```text
+frontend HandGateway
+      ↓
+Tauri mutation command entry
+      ↓
+filesystem side-effect guard where needed
+      ↓
+HandRunner process boundary
+```
 
 ---
 
-## 4. Current mismatch inventory
-
-### M01 — Supervisor context/runtime ownership
-
-Legacy Serenade assembled first-turn truth from `session start + status JSON + project JSON + chat history`. Target behavior is actual Supervisor runtime bootstrap plus fresh per-turn orientation.
-
-**Branch progress:** private fleet/project JSON assembly and injection are gone. Serenade performs a read-only preflight through the configured Rust Hand gateway and the selected qualified Supervisor runtime is explicitly instructed to run its own `hand session start`/`hand orient` contract. A Serenade-collected first-turn `session start` bootstrap hint still exists for 0.6 compatibility; consider removing it after live runtime integration is verified.
-
-### M02 — Lifecycle flattening
-
-Legacy adapters collapse some provider/report signals into convenient statuses.
-
-**Branch progress:** both adapter paths now keep `agent_state=done` distinct from Attempt completion. Terminal Task `done` follows delivery/merge/Attempt lifecycle rather than a report claim. Compact Task details also expose Attempt lifecycle separately through the lineage projection. The general Task status remains a convenience presentation label, so richer detail semantics are still desirable.
-
-### M03 — Backend coupled to Hand 0.6 shapes
-
-Rust currently parses Hand 0.6 JSON/files directly.
-
-**Branch progress:** both frontend and Rust now have explicit Hand compatibility/gateway seams. `src-tauri/src/hand/gateway.rs` owns legacy Supervisor fallback behavior; `process.rs` and each mutation command entry fail closed on unqualified Hand contracts. Brief creation also checks compatibility before touching disk. General read commands still directly consume Hand 0.6 models, so the migration is not complete.
-
-### M04 — Task-centric UI hides Plan/Attempt lineage
-
-**Branch progress:** the Serenade Task domain now has an optional progressive `TaskLineage` projection. The legacy adapter exposes only real Attempt facts and deliberately leaves Plan absent. The compact Task detail panel shows Task → Plan → Attempt, with Plan explicitly unavailable on legacy Hand. Full history/Plan UI waits for canonical data.
-
-### M05 — Attention inferred locally
-
-**Branch progress:** Overview now has an Attention surface, but its current items are explicitly labeled `legacy-derived`. They are diagnostic/progression/retry presentation hints only; the component states that they do not acknowledge, authorize, or replace Hand state. Once Hand publishes canonical `Attention`, that projection should replace the local derivation.
-
----
-
-## 5. Work we can do before v19 locks
-
-### Architecture
-
-  - [~] **S08-001 — Versioned HandGateway boundary**
-    - [x] Add `src/lib/hand/gateway.ts` outside React feature code.
-    - [x] Centralize frontend compatibility policy in `src/lib/hand/compatibility.ts`.
-    - [x] Add Rust `HandLegacyGateway` in `src-tauri/src/hand/gateway.rs`.
-    - [x] Move Supervisor legacy `orient`/`session start` fallback knowledge into the Rust gateway.
-    - [x] Keep React features on Serenade domain/API contracts.
-    - [x] Put the remaining Rust status/project/task reads behind the legacy gateway instead of general `lib.rs` command code.
-    - [ ] Add `HandV08Gateway` only after the released 0.8 structured contract is stable.
-    - [~] Remove direct Hand-shape knowledge from general Tauri command code over time (reads are now behind the gateway; exact legacy mutations still spell direct commands because they are already-exact typed actions).
-
-- [~] **S08-002 — Compatibility/version negotiation**
-  - [x] Reuse existing `hand --version` environment probe.
-  - [x] Classify 0.6 / 0.7-transition / 0.8-unadapted / unknown in frontend.
-  - [x] Mirror the compatibility classifier in Rust.
-  - [x] Show contract + mutation state in Settings/Diagnostics.
-  - [x] Gate workflow mutations in `TauriSerenadeApi`.
-  - [x] Gate every legacy mutation command again at Tauri/Rust command entry.
-  - [x] Gate legacy Hand workflow commands inside `HandRunner` as a second process-boundary check.
-  - [x] Guard pre-spawn brief creation before filesystem side effects.
-  - [x] Add frontend and Rust unit tests for version classification.
-  - [ ] Qualify Hand 0.7 after its actual release before enabling its mutations.
-
-### Supervisor
-
-- [~] **S08-010 — Align Supervisor runtime lifecycle**
-  - [x] Preserve first-runtime bootstrap behavior.
-  - [x] Best-effort preflight every turn; verified 0.6 goes directly to legacy `session start`, transition/newer contracts prefer `hand orient`.
-  - [x] Instruct the **actual Supervisor Harness runtime** to run `hand session start` once and `hand orient` every reasoning turn itself.
-  - [x] Explicitly treat provider session IDs as ephemeral runtime mechanics.
-  - [x] Route preflight through the configured `HandRunner`/`HAND_HOME` instead of hardcoded `hand` on PATH.
-  - [ ] Verify actual runtime command execution with integration tests.
-  - [ ] Cover autonomous wake/re-entry once Serenade has a qualified wake path.
-
-- [~] **S08-011 — Remove private Supervisor Fleet truth**
-  - [x] Remove manually assembled fleet/project JSON from first-turn context.
-  - [x] Fresh Hand context outranks remembered chat state.
-  - [x] State that chat/session state is UX/runtime only.
-  - [ ] Consider removing Serenade's externally collected first-turn `session start` hint entirely once actual Supervisor runtime execution is integration-tested.
-
-- [~] **S08-012 — Provider-neutral Supervisor Harness**
-  - [x] Add a Serenade-owned `supervisorHarness` setting separate from Hand Worker routes/profiles.
-  - [x] Add an explicit qualified runtime dispatch boundary in `supervisor.rs`.
-  - [x] Keep OpenCode as the only selectable/accepted adapter while it is the only Serenade-qualified headless/session path.
-  - [x] Fail closed before spawning when an unqualified Harness value reaches the runtime adapter.
-  - [x] Surface the qualified Supervisor Harness in Settings/Diagnostics.
-  - [ ] Qualify Claude/Codex/Pi/other Supervisor Harness adapters only after their actual headless/session/resume/output contracts are verified.
-
-### Interaction
-
-- [~] **S08-020 — Explicit reasoning vs exact-action paths**
-  - [x] Add `src/lib/interaction/gateway.ts`.
-  - [x] Add shared `useInteraction()` feature hook.
-  - [x] `sendReasoningInput(...)` goes to Supervisor chat/runtime.
-  - [x] Task approval uses direct typed `createTask(...)`; no extra LLM turn.
-  - [x] Task create/send/retry/stop/promote hooks route through InteractionGateway.
-  - [x] Worktree cleanup routes through InteractionGateway; local-only open editor/folder/terminal remains outside workflow interaction.
-  - [ ] Replace legacy exact-action payloads with canonical Hand 0.8 action/currentness contracts when released.
-
-- [ ] **S08-021 — Preserve exact identity/currentness**
-  - Never retarget stale UI actions to "whatever is current now".
-  - Keep future currentness witnesses opaque above Hand-owned services.
-  - Surface stale-action failure and refresh instead of guessing.
-
-### Domain / Presentation
-
-- [~] **S08-030 — Stop flattening report/observation/lifecycle semantics**
-  - [x] Legacy `derive_task_status` no longer promotes provider `done` into review/completion.
-  - [x] Terminal Task completion follows delivery/merge/Attempt lifecycle rather than WorkerReport `done`.
-  - [x] Both Agent projection paths map `agent_state=done` to waiting while Attempt remains running.
-  - [x] Compact detail exposes Attempt lifecycle separately from the convenience Task status.
-  - [ ] Expand full Task detail to show report claim/provider activity/lifecycle as separate named facts.
-
-- [~] **S08-031 — Task → Plan → Attempt progressive disclosure**
-  - [x] Add optional TaskLineage / PlanProjection / AttemptProjection types.
-  - [x] Legacy adapter fills real Attempt ordinal/lifecycle/Harness/model only.
-  - [x] Legacy Plan remains absent; Serenade explicitly displays `unavailable on legacy Hand` rather than guessing.
-  - [x] Compact Task detail shows the lineage slot with source provenance.
-  - [ ] Add full history/Plan detail after canonical Hand projections exist.
-
-- [~] **S08-032 — First-class Attention surface**
-  - [x] Add Overview Attention panel.
-  - [x] Label current items `legacy-derived` and explain that rendering does not acknowledge/authorize Hand state.
-  - [x] Keep legacy classes limited to diagnostic/progression/retry indicators rather than pretending to expose canonical priority/currentness.
-  - [ ] Replace derivation with Hand canonical `Attention` when released.
-  - [ ] Render canonical priority/code/exact subject/available actions/currentness once those contracts stabilize.
-
-### Provider / worktree abstraction
-
-- [~] **S08-040 — Keep Treehouse out of Serenade domain vocabulary**
-  - Current frontend Worktree domain is provider-neutral.
-  - Treehouse references remain legacy Hand 0.6 integration/prerequisite documentation only.
-  - Future v19 UI should consume Hand WorktreeBinding projections rather than provider concepts.
-
-- [~] **S08-041 — Session/Executor mechanics remain informational**
-  - Serenade does not own Herdr/tmux/provider lifecycle.
-  - Legacy raw Hand models still expose Herdr references and should be confined to the legacy adapter as Rust is refactored.
-
----
-
-## 6. Intentionally blocked until Hand 0.8 stabilizes
-
-- [!] **S08-100 — v19 persistence/schema assumptions** — blocked on `#344/#339`; never query/reproduce guessed v19 schema.
-- [!] **S08-101 — canonical FleetSnapshot adapter** — wait for final released structured contract.
-- [!] **S08-102 — canonical Attention actions** — wait for final action/currentness representation.
-- [!] **S08-103 — canonical SupervisorOrientation parser** — runtime behavior can align now; typed parsing waits for release contract.
-- [!] **S08-104 — WorkerInput / WorkerWake UI** — do not rename old `send` into guessed v19 semantics.
-- [!] **S08-105 — remove 0.6 compatibility** — only after minimum supported Hand version is intentionally raised.
-
----
-
-## 7. Integration shape
-
-Current transition:
+## 4. Current architecture
 
 ```text
 React features
@@ -270,7 +138,7 @@ Hand Worker routes/profiles
 Worker Harness selection per Attempt
 ```
 
-Target:
+Target after released Hand 0.8 contracts stabilize:
 
 ```text
 React features
@@ -284,11 +152,178 @@ Interaction + HandGateway
 hand
 ```
 
-Do not lock future API names or v19 data shapes before Hand publishes the stable contract.
+---
+
+## 5. Completed / in-progress work
+
+### Architecture
+
+- [~] **S08-001 — Versioned HandGateway boundary**
+  - [x] Frontend `src/lib/hand/gateway.ts`.
+  - [x] Frontend compatibility policy in `src/lib/hand/compatibility.ts`.
+  - [x] Rust `HandLegacyGateway` in `src-tauri/src/hand/gateway.rs`.
+  - [x] Legacy `fleet_status`, `task_status`, `projects`, `config_document`, and `session_start_hint` command vocabulary lives behind the Rust gateway.
+  - [x] Supervisor `orient` / legacy `session start` fallback lives behind the Rust gateway.
+  - [x] General Tauri read code no longer spells legacy read CLI commands directly.
+  - [x] Legacy `task_status` preserves task-ID validation and task-not-found normalization.
+  - [ ] Add `HandV08Gateway` only after the released 0.8 structured contract is stable.
+  - [~] Legacy Hand model structs are still consumed by the compatibility adapter/presentation mapper; that is acceptable until a canonical 0.8 adapter exists.
+
+- [~] **S08-002 — Compatibility/version negotiation**
+  - [x] Reuse `hand --version` environment probe.
+  - [x] Classify 0.6 / 0.7-transition / 0.8-unadapted / unknown in frontend.
+  - [x] Mirror compatibility classification in Rust.
+  - [x] Show contract + mutation state in Settings/Diagnostics.
+  - [x] Gate workflow mutations in `TauriSerenadeApi`.
+  - [x] Gate every legacy mutation again at Tauri/Rust command entry.
+  - [x] Gate legacy workflow commands inside `HandRunner`.
+  - [x] Guard pre-spawn brief creation before filesystem side effects.
+  - [x] Frontend and Rust regression tests exist for version policy.
+  - [ ] Qualify Hand 0.7 only after testing its actual released contract.
+
+### Supervisor
+
+- [~] **S08-010 — Align Supervisor runtime lifecycle**
+  - [x] Provider session identity is explicitly runtime-only.
+  - [x] Best-effort fresh Hand preflight occurs per turn.
+  - [x] Verified 0.6 uses legacy `session start` context rather than probing known-missing `orient` first.
+  - [x] Actual Supervisor Harness is instructed to bootstrap itself and refresh Hand context before reasoning/action.
+  - [x] Configured Hand binary and `HAND_HOME` are used; no hardcoded `hand` path assumption in preflight.
+  - [ ] Live integration-test the actual OpenCode runtime behavior against Hand 0.6.
+  - [ ] Cover autonomous wake/re-entry after Hand exposes a qualified wake contract.
+
+- [~] **S08-011 — Remove private Supervisor Fleet truth**
+  - [x] Removed manually assembled fleet/project JSON from Supervisor prompt context.
+  - [x] Fresh Hand context outranks remembered chat state.
+  - [x] Chat/session state is documented as UX/runtime state only.
+  - [ ] Re-evaluate the Serenade-collected first-turn `session start` compatibility hint after live runtime testing.
+
+- [~] **S08-012 — Provider-neutral Supervisor Harness**
+  - [x] `supervisorHarness` config is separate from Hand Worker routes/profiles.
+  - [x] Qualified runtime dispatch boundary exists in `supervisor.rs`.
+  - [x] OpenCode is the only currently qualified/selectable adapter.
+  - [x] Unqualified adapters fail closed before spawn.
+  - [x] Settings/Diagnostics expose the selected Supervisor Harness.
+  - [ ] Qualify Claude/Codex/Pi/other Supervisor adapters only after their headless/session/resume/output contracts are verified.
+
+### Interaction
+
+- [~] **S08-020 — Explicit reasoning vs exact-action paths**
+  - [x] `InteractionGateway` exists.
+  - [x] Shared `useInteraction()` hook exists.
+  - [x] Reasoning-required prose goes to Supervisor chat/runtime.
+  - [x] Supervisor task approval is a direct typed task-create operation; no extra LLM turn.
+  - [x] Task create/send/retry/stop/promote hooks route through InteractionGateway.
+  - [x] Worktree cleanup routes through InteractionGateway.
+  - [x] Local-only open editor/folder/terminal stays outside workflow interaction.
+  - [ ] Replace legacy exact-action payloads with canonical Hand 0.8 action/currentness contracts when released.
+
+- [ ] **S08-021 — Preserve exact identity/currentness**
+  - Never retarget stale UI actions to "whatever is current now".
+  - Keep future currentness witnesses opaque above Hand-owned services.
+  - Surface stale-action failure and refresh instead of guessing.
+
+### Domain / presentation
+
+- [~] **S08-030 — Stop flattening report/observation/lifecycle semantics**
+  - [x] Provider `done` does not become Task review/completion while Attempt is running.
+  - [x] Provider `done` maps to waiting for a still-running Attempt.
+  - [x] WorkerReport `done` alone does not complete a running Attempt/Task.
+  - [x] Terminal success follows stronger Hand lifecycle/delivery facts.
+  - [x] Duplicate lifecycle derivation in `agents_list` was consolidated into tested adapter logic.
+  - [x] Compact detail exposes Attempt lifecycle separately from convenience Task status.
+  - [ ] Expand full Task detail to separately name report Claim, provider activity, and Attempt lifecycle.
+
+- [~] **S08-031 — Task → Plan → Attempt progressive disclosure**
+  - [x] `TaskLineage`, `PlanProjection`, and `AttemptProjection` presentation types exist.
+  - [x] Legacy adapter fills only real Attempt facts.
+  - [x] Legacy Plan remains absent and is displayed as `unavailable on legacy Hand`.
+  - [x] Regression test locks the no-fabricated-Plan invariant.
+  - [x] Compact Task detail shows lineage provenance.
+  - [ ] Add full Plan/history UI after canonical Hand projections exist.
+
+- [~] **S08-032 — First-class Attention surface**
+  - [x] Overview has an Attention panel.
+  - [x] Current items are explicitly `legacy-derived`.
+  - [x] Rendering does not acknowledge/authorize/mutate Hand state.
+  - [x] Regression coverage locks Attention provenance behavior.
+  - [ ] Replace local derivation with canonical Hand `Attention` when released.
+  - [ ] Render canonical priority/code/exact subject/actions/currentness only after those contracts stabilize.
+
+### Provider / worktree abstraction
+
+- [~] **S08-040 — Keep Treehouse out of Serenade domain vocabulary**
+  - Frontend Worktree domain is provider-neutral.
+  - Treehouse references remain legacy Hand 0.6 runtime documentation only.
+  - Future v19 UI should consume Hand `WorktreeBinding` projections rather than provider concepts.
+
+- [~] **S08-041 — Session/Executor mechanics remain informational**
+  - Serenade does not own Herdr/tmux/provider lifecycle.
+  - Current Herdr/Treehouse details remain legacy runtime concerns below Serenade.
 
 ---
 
-## 8. UX invariants
+## 6. Intentionally blocked until Hand 0.8 stabilizes
+
+- [!] **S08-100 — v19 persistence/schema assumptions** — blocked on `#344/#339`; never query or reproduce a guessed v19 schema.
+- [!] **S08-101 — canonical FleetSnapshot adapter** — wait for final released structured contract.
+- [!] **S08-102 — canonical Attention actions** — wait for final action/currentness representation.
+- [!] **S08-103 — canonical SupervisorOrientation parser** — runtime behavior can align now; typed parsing waits for release contract.
+- [!] **S08-104 — WorkerInput / WorkerWake UI** — do not rename old `send` into guessed v19 semantics.
+- [!] **S08-105 — native WorktreeBinding adapter** — wait for the released Hand contract rather than duplicating Treehouse/native-Git decisions in Serenade.
+- [!] **S08-106 — remove 0.6 compatibility** — only after Serenade intentionally raises its minimum supported Hand version.
+
+---
+
+## 7. Validation baseline
+
+Post-alignment stabilization was validated locally with:
+
+```text
+npm install                 succeeded
+npm run typecheck           passed
+npm run test                passed (27/27 at stabilization time)
+npm run build               passed (chunk-size warning only)
+cargo check                 passed
+cargo test                  passed (15/15 at stabilization time)
+```
+
+Repository CI now exists at `.github/workflows/ci.yml` and runs:
+
+```text
+npm ci
+npm run typecheck
+npm test
+npm run build
+cargo check --locked --manifest-path src-tauri/Cargo.toml
+cargo test --locked --manifest-path src-tauri/Cargo.toml
+```
+
+The stabilization merge on `main` passed CI. The post-merge task-status gateway validation fix also passed CI.
+
+---
+
+## 8. Remaining transition debt / next safe work
+
+1. **Expand full Task detail** so these are separate named facts rather than one overloaded status:
+   - Attempt lifecycle
+   - provider/agent activity
+   - latest WorkerReport claim
+   - delivery/integration state
+2. **Live-test OpenCode Supervisor runtime** against the verified Hand 0.6 environment:
+   - first-runtime bootstrap
+   - per-turn context refresh
+   - project-scoped cwd
+   - session resume/reset
+3. **Keep compatibility policy current** when Hand 0.7 is actually released.
+4. **Qualify additional Supervisor Harnesses** only when their real runtime/session contracts are known.
+5. Continue ordinary Serenade UX/product work that does not depend on unfinished Hand 0.8 semantics.
+
+**Next upstream checkpoint:** Hand 0.7 release or material `#344/#339` lock/implementation change.
+
+---
+
+## 9. UX / architecture invariants
 
 1. Common-case UI remains understandable without exposing every canonical noun.
 2. Exact semantics are available in detail/history views.
@@ -298,11 +333,12 @@ Do not lock future API names or v19 data shapes before Hand publishes the stable
 6. Supervisor reset/replacement loses zero canonical Fleet truth.
 7. Provider topology does not become core navigation ontology.
 8. Missing data on legacy Hand is shown as unavailable, not fabricated.
-9. Locally-derived compatibility indicators must be labeled as such and never presented as canonical Hand Attention.
+9. Locally-derived compatibility indicators are visibly labeled and never presented as canonical Hand Attention.
+10. New Hand versions do not inherit mutation permission merely because their CLI still looks similar.
 
 ---
 
-## 9. Next-update procedure
+## 10. Next-update procedure
 
 On every meaningful Secondhand update, review at minimum:
 
@@ -324,99 +360,43 @@ Record:
 4. compatibility policy changes;
 5. new public structured contracts;
 6. Supervisor behavior changes;
-7. Presentation/Interaction UX changes.
+7. Presentation/Interaction UX changes;
+8. validation/CI results after adaptation.
 
 ---
 
-## 10. Update log
+## 11. Update log
 
-### 2026-08-29 — Initial architecture alignment review
+### 2026-08-29 — Architecture alignment
 
-Reviewed `#339`, `#346`, `#347`, `#353` and creator clarification.
+- Serenade formally became Presentation + Interaction above Hand.
+- Added frontend/Rust compatibility and gateway seams.
+- Added fail-closed workflow mutation policy.
+- Split reasoning-required input from exact typed actions.
+- Aligned Supervisor lifecycle semantics without inventing v19 persistence.
+- Stopped treating provider/report `done` as lifecycle truth.
+- Added Task → Plan → Attempt presentation scaffolding and provenance-aware Attention shell.
 
-Decisions:
+### 2026-08-29 — Stabilization
 
-- Serenade formally targets Presentation + Interaction.
-- Hand remains the sole workflow authority.
-- Do not implement unfinished v19 persistence.
-- Prepare versioned integration boundary.
-- Move Supervisor toward `session start once → orient every turn`.
-- Stop treating report/provider convenience states as lifecycle truth.
-- Plan Task → Plan → Attempt and first-class Attention UI.
+- Finished legacy read routing through `HandLegacyGateway`.
+- Consolidated duplicate lifecycle derivation.
+- Added WorkerReport/lifecycle and no-fabricated-Plan regression tests.
+- Verified frontend and Rust builds/tests locally.
+- Merged stabilization work to `main`.
+- GitHub Actions CI passed on the stabilization merge.
 
-### 2026-08-29 — First implementation slice
+### 2026-08-29 — Post-merge review
 
-- Frontend Hand compatibility classifier and `HandGateway` seam.
-- Frontend fail-closed workflow mutation gating; **only verified 0.6 is mutation-enabled for now**.
-- Settings/Diagnostics compatibility visibility and tests.
-- Supervisor prompt stops consuming private fleet/project JSON as authoritative truth.
-- Read-only per-turn Hand preflight plus explicit actual-Harness bootstrap/orient instructions.
-- `InteractionGateway` splits reasoning-required prose from direct typed actions.
-- Legacy adapter stops promoting provider `done` into Task review/Agent completion.
-
-### 2026-08-29 — Rust gateway / fail-closed slice
-
-- Added Rust Hand compatibility policy/tests and `HandLegacyGateway`.
-- Added configured-cwd Hand execution while preserving `HAND_HOME`.
-- Added process-boundary and Tauri command-entry mutation compatibility checks.
-- Added pre-filesystem brief compatibility check.
-- Supervisor preflight uses configured Hand binary/gateway and version-aware orientation fallback.
-
-### 2026-08-29 — Supervisor Harness qualification seam
-
-- Added `supervisorHarness` config, separate from Worker routes/profiles.
-- Added qualified runtime adapter dispatch.
-- OpenCode remains the only qualified/selectable adapter.
-- Unqualified adapters fail closed before spawn.
-- Settings/Diagnostics explain and expose the active Supervisor Harness.
-
-### 2026-08-29 — Presentation + interaction consolidation
-
-- Removed unused first-turn fleet/project JSON assembly from Tauri Supervisor chat.
-- Removed duplicate active-Attempt `agent_state=done → completed` mapping.
-- Added progressive TaskLineage domain projection; legacy exposes real Attempt facts and no fabricated Plan.
-- Added Task → Plan → Attempt compact detail UI with provenance.
-- Added provenance-aware Overview Attention shell using explicitly `legacy-derived` indicators until Hand canonical Attention is available.
-- Added shared `useInteraction()` and routed Task workflow mutations/worktree cleanup through the exact-action path.
-
-### 2026-08-29 — Post-alignment stabilization pass
-
-- Created branch `chore/post-hand-alignment-stabilization`.
-- Verified merged repository:
-  - `npm install` succeeded.
-  - `npm run typecheck` passed.
-  - `npm run test` passed (27/27 frontend tests) after updating one stale OverviewPage assertion that expected pre-Attention-panel copy.
-  - `npm run build` passed (production build, chunk-size warning only).
-  - `cargo check` passed cleanly.
-  - `cargo test` passed (15/15 Rust tests).
-- Finished legacy read gateway refactor:
-  - Routed `fleet_status`, `task_status`, `projects`, `config_document`, and `session_start_hint` through `HandLegacyGateway`.
-  - `src-tauri/src/lib.rs` no longer directly spells legacy read CLI commands.
-  - Preserved the TTL fleet-status cache and per-render process efficiency.
-  - Removed the unused `assert_workflow_mutation_compatible` wrapper from `HandLegacyGateway`.
-- Reviewed Supervisor bootstrap: no changes required. Runtime remains ephemeral, first-turn `session start` is a labeled 0.6 compatibility hint, and every turn is instructed to run `hand orient` (or legacy fallback). No private Fleet/project snapshot injection remains.
-- Audited lifecycle semantics:
-  - Consolidated `agents_list` active-Attempt status mapping to reuse `adapter::derive_agent_status`, removing duplicate `agent_state=done → completed` logic.
-  - Added regression test: WorkerReport `done` on a running Attempt does not complete the Task.
-  - Added regression test: legacy Task lineage does not synthesize a Plan.
-- Interaction boundary audit: confirmed all workflow-changing hooks route through `InteractionGateway`; local-only `openWorktree` stays on `SerenadeApi`.
-- Presentation safety: confirmed Task lineage and Attention UI remain explicitly legacy-derived and do not present canonical Hand state.
-- Updated this roadmap.
-
-Remaining transition debt:
-
-- [x] General Rust read commands still parse Hand 0.6 shapes directly instead of going through `HandLegacyGateway`. **Resolved:** all Rust read commands now route through `HandLegacyGateway`; `lib.rs` no longer spells legacy read CLI commands.
-- [~] Serenade still collects a first-turn `session start` hint outside the actual Supervisor runtime for 0.6 compatibility; validate whether it can be removed after live integration testing.
-- [ ] Full Task detail still needs separately named report/provider/lifecycle facts.
-- [ ] OpenCode is the only **qualified** Supervisor Harness; other Hand-capable Harnesses require separate runtime qualification before being exposed.
-- [ ] Canonical FleetSnapshot, Attention, SupervisorOrientation, currentness-aware exact actions, WorkerInput, and WorkerWake remain blocked on released Hand 0.8 contracts.
-- [ ] No repository CI workflow file is present in the working tree (a prior commit message references CI, but `.github/workflows/` is empty). Validation was run locally on this branch (see update log).
-
-Next safe work before v19 lock:
-
-1. [x] Move remaining legacy read parsing behind `HandLegacyGateway`. **Done.**
-2. Expand full Task detail to separate report Claim, provider activity, and Attempt lifecycle.
-3. [x] Add tests for legacy lineage and Attention derivation. **Done.**
-4. Live-test the actual OpenCode Supervisor runtime contract against Hand 0.6, then later Hand 0.7 when released.
-
-**Next upstream checkpoint:** Hand 0.7 release or material `#344/#339` lock/implementation change.
+- Reviewed stabilization changes on `main`.
+- Confirmed current `main` CI was green.
+- Restored task-ID validation and empty-result normalization inside `HandLegacyGateway::task_status`, preserving the semantic behavior of the helper replaced by the refactor.
+- Added a regression test proving invalid task IDs are rejected before launching Hand.
+- Post-fix CI passed.
+- Refreshed the public README to document:
+  - Hand 0.6.x as the verified mutation contract;
+  - fail-closed 0.7/0.8 policy;
+  - Presentation + Interaction architecture;
+  - Supervisor/Worker Harness separation;
+  - Task lineage and legacy-derived Attention semantics;
+  - current CI/development workflow.
