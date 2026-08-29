@@ -8,7 +8,7 @@ import { formatRelativeTime } from "@/lib/format";
 
 export type AttentionClass = "diagnostic" | "progression" | "retry";
 
-interface PresentationAttentionItem {
+export interface PresentationAttentionItem {
   id: string;
   source: "legacy-derived";
   class: AttentionClass;
@@ -17,7 +17,7 @@ interface PresentationAttentionItem {
   href: string;
 }
 
-function deriveLegacyAttention(tasks: Task[], agents: AgentRun[], now: number): PresentationAttentionItem[] {
+export function deriveLegacyAttention(tasks: Task[], agents: AgentRun[], now: number): PresentationAttentionItem[] {
   const items: PresentationAttentionItem[] = [];
 
   for (const task of tasks) {
