@@ -31,6 +31,8 @@ pub struct AppConfig {
     pub hand_binary_path: String,
     #[serde(default)]
     pub fleet_path: Option<String>,
+    #[serde(default = "default_supervisor_harness")]
+    pub supervisor_harness: String,
     #[serde(default = "default_editor")]
     pub preferred_editor: String,
     #[serde(default)]
@@ -50,6 +52,9 @@ pub struct AppConfig {
 fn default_hand_path() -> String {
     "hand".to_string()
 }
+fn default_supervisor_harness() -> String {
+    "opencode".to_string()
+}
 fn default_editor() -> String {
     "vscode".to_string()
 }
@@ -68,6 +73,7 @@ impl Default for AppConfig {
         Self {
             hand_binary_path: default_hand_path(),
             fleet_path: None,
+            supervisor_harness: default_supervisor_harness(),
             preferred_editor: default_editor(),
             custom_editor_path: None,
             refresh_profile: default_refresh(),
@@ -120,6 +126,16 @@ impl ConfigStore {
                         value.as_str().map(str::to_string).unwrap_or_else(default_hand_path)
                 }
                 "fleetPath" => config.fleet_path = value.as_str().map(str::to_string),
+                "supervisorHarness" => {
+                    if let Some(s) = value.as_str() {
+                        // Only OpenCode is qualified today. Persisting an
+                        // arbitrary executable here would accidentally turn UI
+                        // configuration into an unverified Harness adapter.
+                        if s == "opencode" {
+                            config.supervisor_harness = s.to_string();
+                        }
+                    }
+                }
                 "preferredEditor" => {
                     if let Some(s) = value.as_str() {
                         config.preferred_editor = s.to_string();
