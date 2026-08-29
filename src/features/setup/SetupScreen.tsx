@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CircleCheck, CircleX, Loader2, Sparkles } from "lucide-react";
+import { CircleCheck, CircleX, Loader2, Sparkles, Wrench } from "lucide-react";
 import { toAppError, type EnvironmentStatus, type ToolStatus } from "@/types/domain";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
@@ -32,6 +32,12 @@ function toolSummary(tool: ToolStatus) {
   return parts.join(" ");
 }
 
+const INSTALLABLE = new Set(["hand", "treehouse", "herdr"]);
+
+function toolNeedsInstall(tool: ToolStatus | undefined) {
+  return !!tool && tool.state !== "ready" && tool.state !== "installed";
+}
+
 export function SetupScreen({
   env,
   onRevalidate,
@@ -47,6 +53,8 @@ export function SetupScreen({
   const [handPath, setHandPath] = useState(handTool?.path ?? "hand");
   const [fleetPath, setFleetPath] = useState(fleet.path ?? "");
   const [initBusy, setInitBusy] = useState(false);
+  const [installing, setInstalling] = useState<string | null>(null);
+  const [repairing, setRepairing] = useState(false);
 
   const handFound = handTool?.state === "ready";
   const fleetValid = fleet.state === "ready";
@@ -87,6 +95,44 @@ export function SetupScreen({
     }
   };
 
+  const installTool = async (toolId: string): Promise<boolean> => {
+    setInstalling(toolId);
+    try {
+      let result: string;
+      if (toolId === "hand") result = await api.installManagedHand();
+      else if (toolId === "treehouse") result = await api.installTreehouse();
+      else if (toolId === "herdr") result = await api.installHerdr();
+      else return false;
+      onRevalidate();
+      toast.showToast({ variant: "success", title: `${toolId} installed`, description: result });
+      return true;
+    } catch (err) {
+      toast.showToast({
+        variant: "error",
+        title: `${toolId} installation failed`,
+        description: toAppError(err).message,
+      });
+      return false;
+    } finally {
+      setInstalling(null);
+    }
+  };
+
+  const repairAutomatically = async () => {
+    setRepairing(true);
+    try {
+      for (const tool of env.tools) {
+        if (!INSTALLABLE.has(tool.id) || !toolNeedsInstall(tool)) continue;
+        const ok = await installTool(tool.id);
+        if (!ok) return; // stop on first failure; the toast already explains why
+      }
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  const repairable = env.tools.some((t) => INSTALLABLE.has(t.id) && toolNeedsInstall(t));
+
   return (
     <div className="flex min-h-full items-center justify-center bg-base px-4">
       <div className="w-full max-w-md">
@@ -106,6 +152,18 @@ export function SetupScreen({
                 <span className={tool.state === "ready" || tool.state === "installed" ? "text-fg-muted" : "text-danger"}>
                   {toolSummary(tool)}
                 </span>
+                {INSTALLABLE.has(tool.id) && toolNeedsInstall(tool) && (
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    className="ml-auto"
+                    onClick={() => void installTool(tool.id)}
+                    disabled={installing !== null || repairing}
+                  >
+                    {installing === tool.id ? <Loader2 size={11} className="animate-spin" /> : <Wrench size={11} />}
+                    Install
+                  </Button>
+                )}
               </div>
             ))}
             <div className="flex items-center gap-2 text-xs">
@@ -125,6 +183,19 @@ export function SetupScreen({
             ))}
           </div>
 
+          {repairable && (
+            <Button
+              variant="primary"
+              size="md"
+              className="mb-4 w-full"
+              onClick={() => void repairAutomatically()}
+              disabled={installing !== null || repairing}
+            >
+              {repairing || installing ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+              Repair automatically (install missing tools)
+            </Button>
+          )}
+
           <div className="space-y-4">
             <Field label="hand binary path" hint="Executable name on PATH, or an absolute path.">
               <Input value={handPath} onChange={(e) => setHandPath(e.target.value)} placeholder="hand" />
@@ -142,7 +213,7 @@ export function SetupScreen({
                 Initialize a fleet at this path (hand init)
               </Button>
             )}
-            <Button variant="primary" size="md" className="w-full" onClick={save} disabled={updateConfig.isPending}>
+            <Button variant="secondary" size="md" className="w-full" onClick={save} disabled={updateConfig.isPending}>
               {updateConfig.isPending && <Loader2 size={13} className="animate-spin" />}
               Save & validate
             </Button>

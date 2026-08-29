@@ -1,18 +1,19 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MockSerenadeApi } from "@/lib/api/mock";
 import { ApiContext } from "@/lib/api";
 import { UiStoreProvider } from "@/state/ui-store";
 import { ToastProvider } from "@/components/ui/toast";
 import { SetupScreen } from "@/features/setup/SetupScreen";
-import type { EnvironmentStatus } from "@/types/domain";
+import type { EnvironmentStatus, ToolStatus } from "@/types/domain";
 
-function renderSetup(env: EnvironmentStatus) {
+function renderSetupWithApi(env: EnvironmentStatus, api: MockSerenadeApi) {
   const queryClient = new QueryClient();
   return render(
     <QueryClientProvider client={queryClient}>
-      <ApiContext.Provider value={new MockSerenadeApi()}>
+      <ApiContext.Provider value={api}>
         <UiStoreProvider>
           <ToastProvider>
             <SetupScreen env={env} onRevalidate={() => {}} />
@@ -21,6 +22,22 @@ function renderSetup(env: EnvironmentStatus) {
       </ApiContext.Provider>
     </QueryClientProvider>,
   );
+}
+
+function renderSetup(env: EnvironmentStatus) {
+  renderSetupWithApi(env, new MockSerenadeApi());
+}
+
+function runtimeTool(id: string, label: string): ToolStatus {
+  return {
+    id,
+    label,
+    required: true,
+    state: "missing",
+    compatible: false,
+    message: `${label} was not found.`,
+    capabilities: [],
+  };
 }
 
 function baseEnv(overrides: Partial<EnvironmentStatus> = {}): EnvironmentStatus {
@@ -104,5 +121,33 @@ describe("Setup screen (UX-ERROR-001)", () => {
       }),
     );
     expect(screen.getByText(/Secondhand \/ hand \(0\.6\.3\)/i)).toBeInTheDocument();
+  });
+
+  it("offers per-tool install actions and repairs all missing tools automatically", async () => {
+    const api = new MockSerenadeApi();
+    const handSpy = vi.spyOn(api, "installManagedHand");
+    const treehouseSpy = vi.spyOn(api, "installTreehouse");
+    const herdrSpy = vi.spyOn(api, "installHerdr");
+    const user = userEvent.setup();
+
+    renderSetupWithApi(
+      baseEnv({
+        tools: [
+          ...baseEnv().tools.filter((t) => t.id !== "supervisor"),
+          runtimeTool("treehouse", "Treehouse"),
+          runtimeTool("herdr", "Herdr"),
+        ],
+      }),
+      api,
+    );
+
+    // Per-tool install buttons are offered next to each missing tool.
+    expect(screen.getAllByRole("button", { name: /install/i }).length).toBeGreaterThanOrEqual(3);
+
+    await user.click(screen.getByRole("button", { name: /repair automatically/i }));
+
+    await waitFor(() => expect(handSpy).toHaveBeenCalled(), { timeout: 5000 });
+    await waitFor(() => expect(treehouseSpy).toHaveBeenCalled(), { timeout: 5000 });
+    await waitFor(() => expect(herdrSpy).toHaveBeenCalled(), { timeout: 5000 });
   });
 });
