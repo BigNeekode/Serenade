@@ -7,7 +7,7 @@ import { useToast } from "@/components/ui/toast";
 import { useApi } from "@/lib/api";
 import { useEnvironment, useUpdateConfig } from "@/hooks/use-config";
 import { compatibilityFromEnvironment } from "@/lib/hand/compatibility";
-import type { ToolStatus } from "@/types/domain";
+import { toAppError, type ToolStatus } from "@/types/domain";
 
 function ToolCard({
   tool,
@@ -90,7 +90,7 @@ export function EnvironmentSection({ onRevalidate }: { onRevalidate: () => void 
       toast.showToast({
         variant: "error",
         title: "Managed Hand installation failed",
-        description: err instanceof Error ? err.message : undefined,
+        description: toAppError(err).message,
       });
     } finally {
       setInstalling(false);

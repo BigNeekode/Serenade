@@ -51,7 +51,6 @@ pub struct InstallPlan {
 }
 
 pub struct InstallResult {
-    pub version: String,
     pub path: PathBuf,
 }
 
@@ -298,7 +297,8 @@ pub async fn install_managed_hand(managed_root: &Path) -> Result<InstallResult, 
     let activated = version_dir.join("hand.exe");
 
     // Validate before activation.
-    let version = probe_version(&extracted)?;
+    // Validate before activation (also enforces the qualified-version policy).
+    probe_version(&extracted)?;
 
     // Atomic rename-style activation.
     std::fs::rename(&extracted, &activated).map_err(|e| {
@@ -309,7 +309,7 @@ pub async fn install_managed_hand(managed_root: &Path) -> Result<InstallResult, 
     let _ = std::fs::remove_dir_all(&staging);
     let _ = std::fs::remove_file(&archive);
 
-    Ok(InstallResult { version, path: activated })
+    Ok(InstallResult { path: activated })
 }
 
 #[cfg(test)]

@@ -167,16 +167,16 @@ Serenade will detect whether the configured Hand is managed, system, or custom a
 
 ### Managed tool storage
 
-Tools Serenade installs for you live under its application-data directory, conceptually:
+Tools Serenade installs for you live under its local application-data directory (managed binaries are machine-local and do not roam):
 
 ```text
-%LOCALAPPDATA%\Serenade\
-├─ config\        # Serenade-owned config (e.g. serenade-config.json)
+%LOCALAPPDATA%\app.serenade.desktop\Serenade\
 ├─ cache\         # downloads and staging
-├─ logs\          # application logs
 └─ tools\         # managed binaries
    └─ hand\0.6.0\hand.exe
 ```
+
+Serenade-owned config (e.g. `serenade-config.json`) lives separately under the roaming application-data directory. Logs go under the local application-data directory as well.
 
 Serenade never installs `latest` blindly. The qualified Hand version is pinned in the installer manifest and verified against the official release checksums before activation.
 

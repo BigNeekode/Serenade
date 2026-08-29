@@ -119,6 +119,32 @@ describe("SetupWizard", () => {
     expect(projects.some((p) => p.name === "demo-project")).toBe(true);
   });
 
+  it("points config at the managed Hand path after installing", async () => {
+    const api = new MockSerenadeApi();
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ApiContext.Provider value={api}>
+          <UiStoreProvider>
+            <ToastProvider>
+              <SetupWizard env={baseEnv()} onComplete={() => {}} onRevalidate={() => {}} />
+            </ToastProvider>
+          </UiStoreProvider>
+        </ApiContext.Provider>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /get started/i }));
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    fireEvent.click(screen.getByText(/quick setup/i));
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /prepare environment/i })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /prepare environment/i }));
+
+    await waitFor(() => expect(screen.getByText(/set up serenade supervisor/i)).toBeInTheDocument());
+    const cfg = await api.getConfig();
+    expect(cfg.handBinaryPath).toBe("C:\\mock\\Serenade\\tools\\hand\\0.6.0\\hand.exe");
+  });
+
   it("allows skipping Supervisor", async () => {
     renderWizard(baseEnv());
     fireEvent.click(screen.getByRole("button", { name: /get started/i }));

@@ -168,7 +168,14 @@ async fn fleet_init(path: String, force: Option<bool>) -> Result<(), SerenadeErr
 async fn install_managed_hand() -> Result<String, SerenadeError> {
     let ctx = CTX.get().expect("ctx");
     let result = installer::install_managed_hand(&ctx.managed_root).await?;
-    Ok(format!("Installed Hand {} at {}", result.version, result.path.display()))
+    let path = result.path.to_string_lossy().into_owned();
+    // Point the configured Hand binary at the freshly installed managed
+    // executable so subsequent operations (fleet init, workflow mutations)
+    // use it without requiring PATH changes.
+    ctx.config
+        .update(serde_json::json!({ "handBinaryPath": path }))
+        .map_err(|e| SerenadeError::new(Code::CommandFailed, "Could not save config", e))?;
+    Ok(path)
 }
 
 #[tauri::command]
@@ -1065,7 +1072,10 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
-            let managed_root = data_dir.join("Serenade");
+            // Managed binaries are machine-local: they must not roam across
+            // machines (architecture/activation state is host-specific).
+            let local_dir = app.path().app_local_data_dir()?;
+            let managed_root = local_dir.join("Serenade");
             let _ = std::fs::create_dir_all(&managed_root);
             let _ = CTX.set(AppCtx {
                 config: ConfigStore::new(data_dir),

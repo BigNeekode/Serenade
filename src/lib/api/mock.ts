@@ -555,8 +555,9 @@ export class MockSerenadeApi implements SerenadeApi {
 
   async installManagedHand(): Promise<string> {
     await delay();
-    this.config = { ...this.config, handBinaryPath: "/managed/hand.exe" };
-    return "Installed Hand 0.6.0 (mock) at /managed/hand.exe";
+    const path = "C:\\mock\\Serenade\\tools\\hand\\0.6.0\\hand.exe";
+    this.config = { ...this.config, handBinaryPath: path };
+    return path;
   }
 
   // -- reads ------------------------------------------------------------------

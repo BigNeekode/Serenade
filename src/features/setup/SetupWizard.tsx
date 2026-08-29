@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { CircleCheck, CircleX, Loader2, ArrowRight, RotateCcw, SkipForward } from "lucide-react";
-import type { EnvironmentStatus, ToolStatus } from "@/types/domain";
+import { toAppError, type EnvironmentStatus, type ToolStatus } from "@/types/domain";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { useUpdateConfig } from "@/hooks/use-config";
@@ -140,16 +140,20 @@ export function SetupWizard({
   const handlePlanExecute = async () => {
     setBusy(true);
     try {
-      // Install a managed Hand when no qualified Hand is present.
+      let handPath = state.handPath.trim();
+
+      // Install a managed Hand when no qualified Hand is present. The backend
+      // also points the config at the managed executable; keep the returned
+      // absolute path so the fleet init below uses the same binary.
       if (handTool?.state !== "ready") {
         try {
-          const result = await api.installManagedHand();
-          toast.showToast({ variant: "success", title: "Hand installed", description: result });
+          handPath = await api.installManagedHand();
+          toast.showToast({ variant: "success", title: "Hand installed", description: handPath });
         } catch (err) {
           toast.showToast({
             variant: "error",
             title: "Managed Hand installation failed",
-            description: err instanceof Error ? err.message : undefined,
+            description: toAppError(err).message,
           });
           return;
         }
@@ -164,13 +168,13 @@ export function SetupWizard({
           toast.showToast({
             variant: "error",
             title: "Fleet initialization failed",
-            description: err instanceof Error ? err.message : undefined,
+            description: toAppError(err).message,
           });
           return;
         }
       }
 
-      await saveConfig({ handBinaryPath: state.handPath.trim() || null, fleetPath: state.fleetPath.trim() || null });
+      await saveConfig({ handBinaryPath: handPath || null, fleetPath: state.fleetPath.trim() || null });
       onRevalidate();
       setStep("supervisor");
     } finally {
@@ -204,7 +208,7 @@ export function SetupWizard({
       toast.showToast({
         variant: "error",
         title: "Could not register project",
-        description: err instanceof Error ? err.message : undefined,
+        description: toAppError(err).message,
       });
     }
   };

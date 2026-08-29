@@ -230,7 +230,14 @@ impl<P: EnvironmentProbes> EnvironmentInspector<P> {
         let candidate = if !is_default_placeholder {
             let path = PathBuf::from(configured);
             if self.probes.is_file(&path) {
-                Some((ToolOwnership::Custom, path))
+                // A configured path that lives inside Serenade's managed tool
+                // root is a managed install, not an operator-supplied custom path.
+                let ownership = if path.starts_with(&self.managed_root) {
+                    ToolOwnership::Managed
+                } else {
+                    ToolOwnership::Custom
+                };
+                Some((ownership, path))
             } else {
                 // Try PATH as a fallback for bare names.
                 self.probes
@@ -565,6 +572,30 @@ mod tests {
         let hand = status.tools.iter().find(|t| t.id == "hand").unwrap();
         assert_eq!(hand.ownership, Some(ToolOwnership::Managed));
         assert_eq!(hand.path.as_deref(), Some(managed_hand.to_str().unwrap()));
+        assert_eq!(hand.state, ToolState::Ready);
+    }
+
+    #[test]
+    fn configured_path_inside_managed_root_is_managed() {
+        let managed_root = PathBuf::from("/managed");
+        let hand_bin_name = if cfg!(windows) { "hand.exe" } else { "hand" };
+        let managed_hand = managed_root
+            .join("tools")
+            .join("hand")
+            .join("0.6.0")
+            .join(hand_bin_name);
+
+        let mut probes = FakeProbes::new();
+        probes.file_set.insert(managed_hand.clone());
+        probes.versions.insert(managed_hand.clone(), "hand v0.6.0".to_string());
+
+        let mut config = default_config();
+        config.hand_binary_path = managed_hand.to_string_lossy().into_owned();
+
+        let inspector = EnvironmentInspector::new(probes, managed_root);
+        let status = inspector.scan(&config);
+        let hand = status.tools.iter().find(|t| t.id == "hand").unwrap();
+        assert_eq!(hand.ownership, Some(ToolOwnership::Managed));
         assert_eq!(hand.state, ToolState::Ready);
     }
 

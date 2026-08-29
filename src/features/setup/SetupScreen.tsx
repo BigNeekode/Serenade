@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { CircleCheck, CircleX, Loader2, Sparkles } from "lucide-react";
-import type { EnvironmentStatus, ToolStatus } from "@/types/domain";
+import { toAppError, type EnvironmentStatus, type ToolStatus } from "@/types/domain";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { useUpdateConfig } from "@/hooks/use-config";
@@ -80,7 +80,7 @@ export function SetupScreen({
       toast.showToast({
         variant: "error",
         title: "hand init failed",
-        description: err instanceof Error ? err.message : undefined,
+        description: toAppError(err).message,
       });
     } finally {
       setInitBusy(false);
