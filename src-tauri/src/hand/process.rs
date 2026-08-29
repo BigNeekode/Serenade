@@ -1,4 +1,5 @@
 use crate::error::SerenadeError;
+use crate::hand::compatibility;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -96,6 +97,17 @@ pub struct HandRunner {
     pub fleet_home: Option<PathBuf>,
 }
 
+fn is_workflow_mutation(args: &[&str]) -> bool {
+    matches!(
+        args.first(),
+        Some(&"spawn")
+            | Some(&"send")
+            | Some(&"reopen")
+            | Some(&"teardown")
+            | Some(&"promote")
+    )
+}
+
 impl HandRunner {
     /// Run and capture stdout+stderr together with the exit status.
     /// Fixed argument construction only — never a shell string (architecture.md §11).
@@ -104,11 +116,35 @@ impl HandRunner {
         args: &[&str],
         timeout_secs: u64,
     ) -> Result<Result<String, HandErrorDoc>, SerenadeError> {
+        self.capture_at(args, timeout_secs, None)
+    }
+
+    /// Same as `capture`, but executes with an explicit process cwd. HAND_HOME
+    /// still points at the configured Fleet, so project-scoped presentation can
+    /// inspect a project clone without changing Hand's Fleet identity.
+    pub fn capture_in(
+        &self,
+        args: &[&str],
+        timeout_secs: u64,
+        cwd: &Path,
+    ) -> Result<Result<String, HandErrorDoc>, SerenadeError> {
+        self.capture_at(args, timeout_secs, Some(cwd))
+    }
+
+    fn capture_at(
+        &self,
+        args: &[&str],
+        timeout_secs: u64,
+        cwd: Option<&Path>,
+    ) -> Result<Result<String, HandErrorDoc>, SerenadeError> {
         let mut cmd = Command::new(&self.binary);
         cmd.args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null());
+        if let Some(cwd) = cwd {
+            cmd.current_dir(cwd);
+        }
         no_window(&mut cmd);
 
         if let Some(home) = &self.fleet_home {
@@ -165,9 +201,52 @@ impl HandRunner {
         }
     }
 
+    pub fn version(&self) -> Result<String, SerenadeError> {
+        match self.capture(&["--version"], 10)? {
+            Ok(stdout) => Ok(stdout.trim().to_string()),
+            Err(doc) => Err(doc.into_serenade("--version")),
+        }
+    }
+
+    /// Fail closed before executing a workflow mutation through the Rust
+    /// boundary. This duplicates the frontend compatibility guard on purpose:
+    /// raw Tauri invocation must not bypass contract qualification.
+    pub fn assert_workflow_mutation_compatible(&self) -> Result<(), SerenadeError> {
+        let version = self.version()?;
+        compatibility::require_mutations(&version).map(|_| ())
+    }
+
     /// Run expecting success and returning stdout; maps failures to SerenadeError.
     pub fn expect(&self, args: &[&str], timeout_secs: u64) -> Result<String, SerenadeError> {
-        match self.capture(args, timeout_secs)? {
+        if is_workflow_mutation(args) {
+            self.assert_workflow_mutation_compatible()?;
+        }
+        self.expect_unchecked_at(args, timeout_secs, None)
+    }
+
+    pub fn expect_in(
+        &self,
+        args: &[&str],
+        timeout_secs: u64,
+        cwd: &Path,
+    ) -> Result<String, SerenadeError> {
+        if is_workflow_mutation(args) {
+            self.assert_workflow_mutation_compatible()?;
+        }
+        self.expect_unchecked_at(args, timeout_secs, Some(cwd))
+    }
+
+    fn expect_unchecked_at(
+        &self,
+        args: &[&str],
+        timeout_secs: u64,
+        cwd: Option<&Path>,
+    ) -> Result<String, SerenadeError> {
+        let result = match cwd {
+            Some(cwd) => self.capture_in(args, timeout_secs, cwd)?,
+            None => self.capture(args, timeout_secs)?,
+        };
+        match result {
             Ok(stdout) => Ok(stdout),
             Err(doc) => Err(doc.into_serenade(args.first().unwrap_or(&""))),
         }
