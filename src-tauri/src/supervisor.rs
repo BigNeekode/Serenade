@@ -21,13 +21,13 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const SUPERVISOR_TIMEOUT_SECS: u64 = 240;
 /// Cap injected Hand context so a large fleet cannot blow up the prompt.
 const CONTEXT_BUDGET: usize = 12_000;
-/// cmd.exe documents an 8191-character command-line limit. Prompts routed
-/// through a `.cmd`/`.bat` shim must stay safely under it.
-const SHIM_CMDLINE_LIMIT: usize = 7_500;
+/// CreateProcess caps a command line at 32767 characters; refuse turns whose
+/// composed prompt would risk exceeding it instead of failing obscurely.
+const PROMPT_HARD_LIMIT: usize = 30_000;
 
 /// Resolved OpenCode program, cached for the app session once discovery
 /// succeeds. Failed lookups are never cached so a later install is picked up.
-static RESOLVED_OPENCODE: std::sync::OnceLock<(PathBuf, bool)> = std::sync::OnceLock::new();
+static RESOLVED_OPENCODE: std::sync::OnceLock<HarnessProgram> = std::sync::OnceLock::new();
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,16 +84,35 @@ fn fresh_hand_context(cwd: &PathBuf) -> Option<(&'static str, String)> {
         .map(|(source, context)| (source.label(), context))
 }
 
+/// The program to spawn for a Supervisor turn.
+#[derive(Debug, Clone)]
+enum HarnessProgram {
+    /// A directly executable binary.
+    Exe(PathBuf),
+    /// A Node.js launcher referenced by an npm-style shim: spawn with node,
+    /// which accepts multi-line arguments without cmd.exe's limits.
+    Node { node: PathBuf, script: PathBuf },
+}
+
+impl HarnessProgram {
+    fn label(&self) -> String {
+        match self {
+            Self::Exe(exe) => exe.display().to_string(),
+            Self::Node { node, script } => format!("{} {}", node.display(), script.display()),
+        }
+    }
+}
+
 /// Resolve the OpenCode executable the same way the environment scan does
 /// (PATHEXT-aware). A bare-name spawn only finds `.exe` files, so an npm-style
-/// `opencode.cmd` shim is "installed" for the scan but invisible to the spawn —
-/// the exact mismatch that made the supervisor fail with "executable not
-/// found" while the environment page reported OpenCode ready.
+/// `opencode.cmd` shim is "installed" for the scan but invisible to the spawn.
 ///
-/// When the resolved program is a shim, try to locate the real executable it
-/// references, validate it with `--version`, and use it directly — this also
-/// avoids cmd.exe's 8191-character command-line limit for large prompts.
-fn resolve_opencode_program() -> Result<(PathBuf, bool), SerenadeError> {
+/// The shim itself can never be spawned with our prompt: Rust std rejects
+/// multi-line arguments to batch files ("batch file arguments are invalid"),
+/// and cmd.exe caps command lines at 8191 characters. Instead, resolve what
+/// the shim forwards to — an `.exe` is spawned directly, a launcher script is
+/// run with `node` — and validate the result with `--version` before use.
+fn resolve_opencode_program() -> Result<HarnessProgram, SerenadeError> {
     let path = which::which("opencode").map_err(|_| {
         SerenadeError::new(
             Code::HandNotFound,
@@ -109,27 +128,79 @@ fn resolve_opencode_program() -> Result<(PathBuf, bool), SerenadeError> {
         .map(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
         .unwrap_or(false);
     if !is_shim {
-        return Ok((path, false));
+        return Ok(HarnessProgram::Exe(path));
     }
 
-    if let Some(exe) = exe_behind_shim(&path) {
-        if crate::runtime_tools::probe_version(&exe).is_some() {
-            return Ok((exe, false));
+    for target in shim_targets(&path) {
+        if target
+            .extension()
+            .map(|e| e.eq_ignore_ascii_case("exe"))
+            .unwrap_or(false)
+        {
+            let program = HarnessProgram::Exe(target);
+            if probe_harness_version(&program) {
+                return Ok(program);
+            }
+        } else if let Ok(node) = which::which("node") {
+            let program = HarnessProgram::Node { node, script: target };
+            if probe_harness_version(&program) {
+                return Ok(program);
+            }
         }
     }
-    // Fall back to the shim itself: std routes .cmd/.bat through cmd.exe with
-    // safe quoting. Large prompts must then stay under the cmd line limit.
-    Ok((path, true))
+
+    Err(SerenadeError::new(
+        Code::CommandFailed,
+        "OpenCode npm shim could not be resolved",
+        "OpenCode was installed through npm as a command shim, and command shims cannot receive the multi-line supervisor prompt directly.",
+    )
+    .with_action(
+        "Install the standalone OpenCode binary (https://opencode.ai), or make sure Node.js (node.exe) is on PATH so the shim's target can be launched directly.",
+    ))
 }
 
-/// Best-effort extraction of the executable an npm-style `.cmd` shim forwards
-/// to. npm shims reference their program relative to the shim directory via
-/// `%dp0%` / `%~dp0`; expand those tokens and probe for an existing file.
-fn exe_behind_shim(shim: &Path) -> Option<PathBuf> {
-    let script = std::fs::read_to_string(shim).ok()?;
-    let base = shim.parent()?;
+/// Validate a resolved harness program with `--version` (best-effort).
+fn probe_harness_version(program: &HarnessProgram) -> bool {
+    let mut cmd = match program {
+        HarnessProgram::Exe(exe) => {
+            let mut c = Command::new(exe);
+            c.arg("--version");
+            c
+        }
+        HarnessProgram::Node { node, script } => {
+            let mut c = Command::new(node);
+            c.arg(script).arg("--version");
+            c
+        }
+    };
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd.output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// Extract the target programs an npm-style `.cmd`/`.bat` shim forwards to.
+/// npm shims reference their program relative to the shim directory via
+/// `%dp0%` / `%~dp0`; expand those tokens and keep every referenced file.
+///
+/// Tokens are split on all whitespace: the reference appears at the start of
+/// its own line in real npm shims, so splitting on spaces alone would glue
+/// the previous line onto the path and break resolution.
+fn shim_targets(shim: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let Ok(script) = std::fs::read_to_string(shim) else {
+        return out;
+    };
+    let Some(base) = shim.parent() else {
+        return out;
+    };
     let base_str = base.to_string_lossy().into_owned();
-    for raw in script.split([' ', '\t', '\r']) {
+    for raw in script.split_whitespace() {
         let token = raw.trim_matches('"');
         if !token.contains("%dp0%") && !token.contains("%~dp0") {
             continue;
@@ -148,14 +219,13 @@ fn exe_behind_shim(shim: &Path) -> Option<PathBuf> {
             s.push(".exe");
             PathBuf::from(s)
         };
-        if with_exe.is_file() {
-            return Some(with_exe);
-        }
-        if candidate.is_file() {
-            return Some(candidate);
+        for hit in [with_exe, candidate] {
+            if hit.is_file() && !out.contains(&hit) {
+                out.push(hit);
+            }
         }
     }
-    None
+    out
 }
 
 /// Build the process for one explicitly qualified Supervisor Harness adapter.
@@ -163,10 +233,7 @@ fn exe_behind_shim(shim: &Path) -> Option<PathBuf> {
 /// Worker routing is intentionally unrelated to this selection. Adding a new
 /// value here requires verifying that Harness's headless invocation, session
 /// resume, output parsing, cwd behavior, and Hand supervisor-runtime contract.
-///
-/// Returns the resolved program plus whether it is a `.cmd`/`.bat` shim (which
-/// constrains the command-line length).
-fn qualified_harness_program(harness: &str) -> Result<(PathBuf, bool), SerenadeError> {
+fn qualified_harness_program(harness: &str) -> Result<HarnessProgram, SerenadeError> {
     match harness {
         "opencode" => {
             if let Some(cached) = RESOLVED_OPENCODE.get() {
@@ -189,16 +256,6 @@ fn qualified_harness_program(harness: &str) -> Result<(PathBuf, bool), SerenadeE
     }
 }
 
-/// Session-doc budget for the first-turn prompt. Shim installs must keep the
-/// whole command line under cmd.exe's limit, so the bootstrap hint is trimmed
-/// much harder there.
-pub fn first_turn_doc_budget(harness: &str) -> usize {
-    match qualified_harness_program(harness) {
-        Ok((_, true)) => 1_500,
-        _ => CONTEXT_BUDGET / 2,
-    }
-}
-
 /// Assemble the harness command for one turn.
 ///
 /// `--auto` (documented OpenCode flag: "auto-approve permissions that are not
@@ -209,14 +266,24 @@ pub fn first_turn_doc_budget(harness: &str) -> usize {
 /// through `hand config`. Serenade's operator gate is unchanged: task dispatch
 /// still happens only through typed approval cards.
 fn harness_command(
-    program: &Path,
+    program: &HarnessProgram,
     session_id: Option<&str>,
     cwd: &Path,
     turn_prompt: &str,
 ) -> Command {
-    let mut cmd = Command::new(program);
-    cmd.args(["run", "--format", "json", "--auto"])
-        .current_dir(cwd)
+    let mut cmd = match program {
+        HarnessProgram::Exe(exe) => {
+            let mut c = Command::new(exe);
+            c.args(["run", "--format", "json", "--auto"]);
+            c
+        }
+        HarnessProgram::Node { node, script } => {
+            let mut c = Command::new(node);
+            c.arg(script).args(["run", "--format", "json", "--auto"]);
+            c
+        }
+    };
+    cmd.current_dir(cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::null());
@@ -242,7 +309,6 @@ pub fn build_first_turn_prompt(
     _projects_json: &str,
     message: &str,
     project: Option<&str>,
-    doc_budget: usize,
 ) -> String {
     let scope = match project {
         Some(name) => format!(
@@ -280,14 +346,13 @@ The block above was collected by Serenade before your provider runtime started. 
 - Keep replies short and operator-focused. Ask only genuinely operator-owned questions.
 
 Operator: {message}"#,
-        session_doc = truncate(session_doc.to_string(), doc_budget),
+        session_doc = truncate(session_doc.to_string(), CONTEXT_BUDGET / 2),
         message = message,
     )
 }
 
 /// Compose the full turn prompt. `None` context produces the minimal variant
-/// used when the preflight fails or when a shim's command-line budget is
-/// exhausted.
+/// used when the preflight fails.
 fn compose_turn_prompt(
     context: Option<&(&'static str, String)>,
     context_budget: usize,
@@ -324,30 +389,21 @@ pub fn run_supervisor_turn(
 
     let (config, runner, _) = crate::setup()?;
     let harness = config.supervisor_harness.clone();
-    let (program, is_shim) = qualified_harness_program(&harness)?;
+    let program = qualified_harness_program(&harness)?;
 
     let context = fresh_hand_context(&cwd.to_path_buf());
-    let mut turn_prompt = compose_turn_prompt(context.as_ref(), CONTEXT_BUDGET, message, runtime_instruction);
-    if is_shim {
-        // Keep the whole command line safely under cmd.exe's 8191-char limit:
-        // shrink the injected context first, then drop it entirely.
-        let overhead = message.len() + runtime_instruction.len() + 700;
-        let budget = SHIM_CMDLINE_LIMIT.saturating_sub(overhead);
-        turn_prompt = compose_turn_prompt(context.as_ref(), budget, message, runtime_instruction);
-        if turn_prompt.len() > SHIM_CMDLINE_LIMIT {
-            turn_prompt = compose_turn_prompt(None, 0, message, runtime_instruction);
-        }
-        if turn_prompt.len() > SHIM_CMDLINE_LIMIT {
-            return Err(SerenadeError::new(
-                Code::CommandFailed,
-                "Message too long for this OpenCode install",
-                format!(
-                    "OpenCode resolves to an npm command shim, and cmd.exe limits command lines to 8191 characters. This turn would be {} characters.",
-                    turn_prompt.len()
-                ),
-            )
-            .with_action("Install the standalone OpenCode binary instead of the npm shim."));
-        }
+    let turn_prompt = compose_turn_prompt(context.as_ref(), CONTEXT_BUDGET, message, runtime_instruction);
+    if turn_prompt.len() > PROMPT_HARD_LIMIT {
+        return Err(SerenadeError::new(
+            Code::CommandFailed,
+            "Supervisor message too long",
+            format!(
+                "The composed turn prompt is {} characters; the practical command-line limit is {}.",
+                turn_prompt.len(),
+                PROMPT_HARD_LIMIT
+            ),
+        )
+        .with_action("Send a shorter message."));
     }
 
     let mut cmd = harness_command(&program, session_id, cwd, &turn_prompt);
@@ -372,7 +428,7 @@ pub fn run_supervisor_turn(
                 "Supervisor Harness executable not found",
                 format!(
                     "The qualified Serenade Supervisor Harness {harness:?} could not be executed at {}.",
-                    program.display()
+                    program.label()
                 ),
             )
             .with_action(
@@ -383,7 +439,7 @@ pub fn run_supervisor_turn(
             return Err(SerenadeError::new(
                 Code::CommandFailed,
                 "Could not launch Supervisor Harness",
-                e.to_string(),
+                format!("{} ({})", e, program.label()),
             ));
         }
     };
@@ -486,7 +542,6 @@ mod tests {
             "PRIVATE_PROJECT_JSON",
             "do stuff",
             None,
-            CONTEXT_BUDGET / 2,
         );
         assert!(prompt.contains("```tasks"));
         assert!(prompt.contains("SESSION"));
@@ -499,18 +554,8 @@ mod tests {
     }
 
     #[test]
-    fn first_turn_prompt_respects_shim_doc_budget() {
-        let long_doc = "X".repeat(10_000);
-        let prompt = build_first_turn_prompt(&long_doc, "", "", "go", None, 1_500);
-        // The bootstrap hint is trimmed hard; the operator message survives.
-        assert!(prompt.matches('X').count() <= 1_500);
-        assert!(prompt.contains("go"));
-    }
-
-    #[test]
     fn project_scoped_prompt_pins_project() {
-        let prompt =
-            build_first_turn_prompt("S", "{}", "[]", "go", Some("Kanvas-Kosong-Web"), CONTEXT_BUDGET / 2);
+        let prompt = build_first_turn_prompt("S", "{}", "[]", "go", Some("Kanvas-Kosong-Web"));
         assert!(prompt.contains("project **Kanvas-Kosong-Web** specifically"));
         assert!(prompt.contains("set every proposed task's `project` to \"Kanvas-Kosong-Web\""));
     }
@@ -523,19 +568,12 @@ mod tests {
     }
 
     #[test]
-    fn compose_turn_prompt_stays_under_shim_limit_for_large_context() {
-        let runtime_instruction = "instruction";
-        let message = "operator message";
-        let context: (&'static str, String) = ("hand session start (legacy fallback)", "C".repeat(20_000));
-        let overhead = message.len() + runtime_instruction.len() + 700;
-        let budget = SHIM_CMDLINE_LIMIT.saturating_sub(overhead);
-        let prompt = compose_turn_prompt(Some(&context), budget, message, runtime_instruction);
-        assert!(prompt.len() <= SHIM_CMDLINE_LIMIT);
-    }
-
-    #[test]
-    fn exe_behind_shim_resolves_npm_style_reference() {
-        let tmp = std::env::temp_dir().join(format!("serenade-shim-{}", std::process::id()));
+    fn shim_targets_parses_real_npm_shim_layout() {
+        // Mirrors the actual npm-generated opencode.cmd, where the target
+        // reference appears at the start of its own line. A tokenizer that
+        // split only on spaces glued the previous line onto the path and
+        // broke resolution — this is the regression test for that.
+        let tmp = std::env::temp_dir().join(format!("serenade-shim-real-{}", std::process::id()));
         let bin_dir = tmp.join("node_modules").join("opencode-ai").join("bin");
         std::fs::create_dir_all(&bin_dir).unwrap();
         let exe = bin_dir.join("opencode.exe");
@@ -543,22 +581,43 @@ mod tests {
         let shim = tmp.join("opencode.cmd");
         std::fs::write(
             &shim,
-            "@ECHO off\nSET dp0=%~dp0\nIF EXIST \"%dp0%\\node_modules\\opencode-ai\\bin\\opencode.exe\" (\n  SET \"_prog=%dp0%\\node_modules\\opencode-ai\\bin\\opencode.exe\"\n)\n",
+            "@ECHO off\nGOTO start\n:find_dp0\nSET dp0=%~dp0\nEXIT /b\n:start\nSETLOCAL\nCALL :find_dp0\n\"%dp0%\\node_modules\\opencode-ai\\bin\\opencode.exe\"   %*\n",
         )
         .unwrap();
 
-        let found = exe_behind_shim(&shim).expect("should resolve the exe behind the shim");
-        assert_eq!(found, exe);
+        let targets = shim_targets(&shim);
+        assert!(targets.contains(&exe), "expected {exe:?} in {targets:?}");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
-    fn exe_behind_shim_returns_none_without_references() {
+    fn shim_targets_finds_launcher_script_and_exe_variant() {
+        // npm shims for JS-launcher packages reference a script without an
+        // extension; both the script and a sibling .exe are collected.
+        let tmp = std::env::temp_dir().join(format!("serenade-shim-js-{}", std::process::id()));
+        let bin_dir = tmp.join("node_modules").join("opencode-ai").join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let script = bin_dir.join("opencode");
+        std::fs::write(&script, b"// launcher").unwrap();
+        let shim = tmp.join("opencode.cmd");
+        std::fs::write(
+            &shim,
+            "@ECHO off\nSET dp0=%~dp0\n\"%dp0%\\node_modules\\opencode-ai\\bin\\opencode\" %*\n",
+        )
+        .unwrap();
+
+        let targets = shim_targets(&shim);
+        assert!(targets.contains(&script));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn shim_targets_returns_empty_without_references() {
         let tmp = std::env::temp_dir().join(format!("serenade-shim-none-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let shim = tmp.join("opencode.cmd");
         std::fs::write(&shim, "@ECHO off\necho no references\n").unwrap();
-        assert!(exe_behind_shim(&shim).is_none());
+        assert!(shim_targets(&shim).is_empty());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
