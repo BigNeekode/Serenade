@@ -256,7 +256,7 @@ fn no_window(cmd: &mut Command) {
     }
 }
 
-fn probe_version(binary: &Path) -> Option<String> {
+pub(crate) fn probe_version(binary: &Path) -> Option<String> {
     let mut cmd = Command::new(binary);
     cmd.arg("--version")
         .stdout(Stdio::piped())

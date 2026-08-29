@@ -1004,7 +1004,7 @@ async fn supervisor_chat(
     message: String,
     project_id: Option<String>,
 ) -> Result<supervisor::SupervisorReply, SerenadeError> {
-    let (_config, runner, files) = setup()?;
+    let (config, runner, files) = setup()?;
     let ctx = CTX.get().expect("ctx");
     let msg = message.trim();
     if msg.is_empty() {
@@ -1049,12 +1049,14 @@ async fn supervisor_chat(
     let prompt = if session_id.is_none() {
         let gateway = HandLegacyGateway::new(runner);
         let session_doc = gateway.session_start_hint()?;
+        let doc_budget = supervisor::first_turn_doc_budget(&config.supervisor_harness);
         supervisor::build_first_turn_prompt(
             &session_doc,
             "",
             "",
             msg,
             project_id.as_deref(),
+            doc_budget,
         )
     } else {
         let _ = runner;
