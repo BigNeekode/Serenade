@@ -21,8 +21,9 @@ import { useTasks } from "@/hooks/use-tasks";
 import { useAgents } from "@/hooks/use-agents";
 import { useEvents } from "@/hooks/use-events";
 import { useReports } from "@/hooks/use-reports";
-import { useNow, isStaleHeartbeat } from "@/hooks/use-now";
+import { useNow } from "@/hooks/use-now";
 import { formatPercent, formatRelativeTime } from "@/lib/format";
+import { AttentionPanel } from "./AttentionPanel";
 
 const severityIcon = {
   info: <Activity size={12} className="text-info" />,
@@ -50,7 +51,6 @@ export function OverviewPage() {
   const successRate = doneTasks.length + failedTasks.length > 0
     ? (doneTasks.length / (doneTasks.length + failedTasks.length)) * 100
     : null;
-  const staleAgents = agentList.filter((a) => isStaleHeartbeat(a.heartbeatAt, a.status, now));
   const failureReports = (reports.data ?? []).filter((r) => r.kind === "failure_summary");
 
   const projectName = (id?: string) => projects.data?.find((p) => p.id === id)?.name ?? id ?? "—";
@@ -70,22 +70,7 @@ export function OverviewPage() {
         <StatCard label="Pending Review" value={reviewTasks.length} tone="warning" icon={<Timer size={13} />} />
       </div>
 
-      {staleAgents.length > 0 && (
-        <div className="flex items-start gap-2.5 rounded-xl border border-warning/30 bg-warning-soft px-4 py-3">
-          <AlertTriangle size={14} className="mt-0.5 text-warning" />
-          <div className="text-xs leading-relaxed">
-            <p className="font-medium text-warning">Stale worker heartbeats</p>
-            {staleAgents.map((a) => (
-              <p key={a.id} className="text-fg-muted">
-                <Link to="/agents" className="font-mono text-accent hover:underline">
-                  {a.id}
-                </Link>{" "}
-                — last heartbeat {formatRelativeTime(a.heartbeatAt)}
-              </p>
-            ))}
-          </div>
-        </div>
-      )}
+      <AttentionPanel tasks={taskList} agents={agentList} now={now} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
