@@ -57,6 +57,9 @@ export class TauriSerenadeApi implements SerenadeApi {
   async installHerdr(): Promise<string> {
     return invoke("install_herdr");
   }
+  async startHerdrServer(): Promise<void> {
+    return invoke("herdr_start");
+  }
 
   async listProjects(): Promise<Project[]> {
     return invoke("projects_list");

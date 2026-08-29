@@ -594,6 +594,10 @@ export class MockSerenadeApi implements SerenadeApi {
     return "herdr 0.8.2";
   }
 
+  async startHerdrServer(): Promise<void> {
+    await delay();
+  }
+
   // -- reads ------------------------------------------------------------------
 
   async listProjects(): Promise<Project[]> {

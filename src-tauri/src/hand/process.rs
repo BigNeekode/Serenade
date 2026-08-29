@@ -71,6 +71,20 @@ impl HandErrorDoc {
         let lower = self.message.to_lowercase();
         let err = if lower.contains("not inside a secondhand home") {
             SerenadeError::invalid_fleet(self.raw.clone())
+        } else if lower.contains("server_not_running") {
+            // Hand 0.6 dispatches workers into Herdr panes; the Herdr server
+            // must be running first (verified Windows runtime requirement).
+            SerenadeError::new(
+                crate::error::Code::CommandFailed,
+                "Herdr server not running",
+                "Workers run inside Herdr panes, and no Herdr server is running yet.",
+            )
+            .with_detail(self.raw.clone())
+            .with_action(
+                "Start the Herdr server (Settings -> Environment -> Herdr -> Start server, or run \
+                 `herdr` in any terminal), then retry. Keep it running to watch workers; \
+                 Ctrl+B Q detaches and `herdr` reattaches.",
+            )
         } else if lower.contains("task") && lower.contains("not found") {
             SerenadeError::task_not_found(&self.message)
         } else {
@@ -82,13 +96,41 @@ impl HandErrorDoc {
             SerenadeError::new(crate::error::Code::CommandFailed, &title, message)
                 .with_detail(detail.unwrap_or_default())
         };
-        let err = if let Some(action) = action {
-            err.with_action(&action)
+        // Keep branch-specific actions: hand's generic help lines are less
+        // specific than the mapped ones above.
+        let err = if err.suggested_action.is_none() {
+            match action {
+                Some(action) => err.with_action(&action),
+                None => err,
+            }
         } else {
             err
         };
         // usage errors and preconditions are actionable by the operator
         err
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn herdr_server_not_running_maps_to_actionable_error() {
+        let stderr = concat!(
+            "error: herdr workspace lookup/create failed: herdr workspace list: exit status 1: ",
+            "{\"id\":\"cli:workspace:list\",\"error\":{\"code\":\"server_not_running\",",
+            "\"message\":\"no herdr server is running at C:\\Users\\x\\AppData\\Roaming\\herdr\\herdr.sock; ",
+            "run `herdr` to start or attach it\"}}\n",
+            "kind: precondition\n",
+            "exit: 3\n",
+        );
+        let doc = HandErrorDoc::parse(stderr);
+        let err = doc.into_serenade("spawn");
+        assert_eq!(err.title, "Herdr server not running");
+        assert!(err.detail.as_deref().unwrap_or("").contains("server_not_running"));
+        let action = err.suggested_action.expect("must carry an action");
+        assert!(action.contains("Start server"));
     }
 }
 

@@ -192,6 +192,12 @@ async fn install_herdr() -> Result<String, SerenadeError> {
     runtime_tools::install_herdr().await
 }
 
+/// Open a Herdr console window (starting/attaching the Herdr server).
+#[tauri::command]
+async fn herdr_start() -> Result<(), SerenadeError> {
+    runtime_tools::start_herdr_console()
+}
+
 #[tauri::command]
 async fn diagnostics_get() -> Result<Diagnostics, SerenadeError> {
     let ctx = CTX.get().expect("ctx");
@@ -1115,6 +1121,7 @@ pub fn run() {
             install_managed_hand,
             install_treehouse,
             install_herdr,
+            herdr_start,
             diagnostics_get,
             projects_list,
             project_get,

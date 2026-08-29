@@ -383,11 +383,13 @@ The following runtime notes apply to the currently verified Hand 0.6 stack.
 
 ### Worker spawn fails with `server_not_running`
 
-The current Hand 0.6 runtime expects `herdr`. Start it and retry the task.
+The current Hand 0.6 runtime expects `herdr`. Start it and retry the task — either click **Start server** on the Herdr card in **Settings → Environment**, or run it in any terminal:
 
 ```sh
 herdr
 ```
+
+Keep the window open to watch workers run in their panes; `Ctrl+B Q` detaches and `herdr` reattaches.
 
 ### Worker spawn hangs at a `>>` prompt on Windows
 

@@ -12,10 +12,12 @@ import { toAppError, type ToolStatus } from "@/types/domain";
 function ToolCard({
   tool,
   onInstall,
+  onStart,
   onCustomPath,
 }: {
   tool: ToolStatus;
   onInstall?: () => void;
+  onStart?: () => void;
   onCustomPath?: () => void;
 }) {
   const stateClass = {
@@ -54,6 +56,11 @@ function ToolCard({
         {onInstall && (tool.state === "missing" || tool.state === "incompatible" || tool.state === "unhealthy") && (
           <Button variant="secondary" size="xs" onClick={onInstall}>
             Install / Reinstall
+          </Button>
+        )}
+        {onStart && (tool.state === "ready" || tool.state === "installed") && (
+          <Button variant="secondary" size="xs" onClick={onStart}>
+            Start server
           </Button>
         )}
         {onCustomPath && (
@@ -101,6 +108,23 @@ export function EnvironmentSection({ onRevalidate }: { onRevalidate: () => void 
     }
   };
 
+  const handleStartHerdr = async () => {
+    try {
+      await api.startHerdrServer();
+      toast.showToast({
+        variant: "success",
+        title: "Herdr opened in a new terminal window",
+        description: "Keep it running — workers run inside its panes. Ctrl+B Q detaches; herdr reattaches.",
+      });
+    } catch (err) {
+      toast.showToast({
+        variant: "error",
+        title: "Could not start Herdr",
+        description: toAppError(err).message,
+      });
+    }
+  };
+
   const handleSetCustomHand = async () => {
     if (!customPath.trim()) return;
     try {
@@ -139,6 +163,7 @@ export function EnvironmentSection({ onRevalidate }: { onRevalidate: () => void 
                 ? () => handleInstall(tool.id, tool.label)
                 : undefined
             }
+            onStart={tool.id === "herdr" ? () => void handleStartHerdr() : undefined}
             onCustomPath={tool.id === "hand" ? () => setShowCustomPath((s) => !s) : undefined}
           />
         ))}

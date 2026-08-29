@@ -31,6 +31,7 @@ export interface SerenadeApi {
   installManagedHand(): Promise<string>;
   installTreehouse(): Promise<string>;
   installHerdr(): Promise<string>;
+  startHerdrServer(): Promise<void>;
 
   // Reads
   listProjects(): Promise<Project[]>;

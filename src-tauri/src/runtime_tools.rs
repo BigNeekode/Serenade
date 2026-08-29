@@ -35,6 +35,11 @@ use wait_timeout::ChildExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// Give the Herdr TUI its own console window so the operator can watch and
+/// interact with worker panes (Herdr's documented operator model).
+#[cfg(windows)]
+const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+
 const TREEHOUSE_RELEASE_API: &str = "https://api.github.com/repos/kunchenguid/treehouse/releases/latest";
 const TREEHOUSE_DOWNLOAD_BASE: &str = "https://github.com/kunchenguid/treehouse/releases/download";
 const HERDR_MANIFEST_URL: &str = "https://herdr.dev/latest.json";
@@ -99,6 +104,39 @@ pub fn runtime_tool_dirs() -> Vec<PathBuf> {
         dirs.push(d);
     }
     dirs
+}
+
+/// Open a new console window running Herdr, starting (or attaching to) the
+/// Herdr server. Hand 0.6 dispatches workers into Herdr panes and refuses
+/// with `server_not_running` until the server is up.
+///
+/// User-visible by design: Herdr's operator model expects a window the
+/// operator can watch; Serenade never starts hidden background processes.
+/// If a server is already running, `herdr` simply attaches to it.
+pub fn start_herdr_console() -> Result<(), SerenadeError> {
+    let exe = which::which("herdr")
+        .ok()
+        .or_else(|| herdr_exe().filter(|p| p.is_file()))
+        .ok_or_else(|| {
+            SerenadeError::new(
+                Code::CommandFailed,
+                "Herdr is not installed",
+                "No Herdr executable was found on PATH or in its install location.",
+            )
+            .with_action("Install Herdr from Settings -> Environment first.")
+        })?;
+
+    let mut cmd = Command::new(&exe);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Own console window; std handles attach to the new console so the
+        // Herdr TUI renders there. Do NOT redirect stdio for this one.
+        cmd.creation_flags(CREATE_NEW_CONSOLE);
+    }
+    cmd.spawn().map(|_| ()).map_err(|e| {
+        SerenadeError::new(Code::CommandFailed, "Could not start Herdr", e.to_string())
+    })
 }
 
 // ---------------------------------------------------------------------------
