@@ -28,6 +28,29 @@ export type TaskStatus =
   | "failed"
   | "stopped";
 
+export interface PlanProjection {
+  id: string;
+  state?: string;
+}
+
+export interface AttemptProjection {
+  ordinal: number;
+  lifecycle?: string;
+  harness?: string;
+  model?: string;
+}
+
+/**
+ * Progressive-disclosure lineage. Legacy Hand can expose real Attempt facts but
+ * has no canonical v19 Plan projection; missing `plan` means unavailable, not
+ * inferred. `canonical` is reserved for the released Hand 0.8 adapter.
+ */
+export interface TaskLineage {
+  source: "legacy" | "canonical";
+  plan?: PlanProjection;
+  activeAttempt?: AttemptProjection;
+}
+
 export interface Task {
   id: string;
   projectId: string;
@@ -43,6 +66,7 @@ export interface Task {
   branch?: string;
   progress?: number;
   attempts: number;
+  lineage?: TaskLineage;
   createdAt: string;
   updatedAt: string;
 }
