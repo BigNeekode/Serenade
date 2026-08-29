@@ -415,15 +415,9 @@ impl<P: EnvironmentProbes> EnvironmentInspector<P> {
     /// place binaries here, so we can detect them even before a fresh PATH
     /// takes effect).
     fn known_locations(&self, id: &str) -> Vec<PathBuf> {
-        if !cfg!(windows) {
-            return Vec::new();
-        }
-        let Some(local) = std::env::var("LOCALAPPDATA").ok().map(PathBuf::from) else {
-            return Vec::new();
-        };
         match id {
-            "treehouse" => vec![local.join("treehouse").join("treehouse.exe")],
-            "herdr" => vec![local.join("Programs").join("Herdr").join("bin").join("herdr.exe")],
+            "treehouse" => crate::runtime_tools::treehouse_exe().into_iter().collect(),
+            "herdr" => crate::runtime_tools::herdr_exe().into_iter().collect(),
             _ => Vec::new(),
         }
     }

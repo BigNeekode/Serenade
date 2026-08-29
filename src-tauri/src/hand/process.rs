@@ -109,6 +109,27 @@ fn is_workflow_mutation(args: &[&str]) -> bool {
     )
 }
 
+/// PATH for Hand child processes: the current PATH plus Serenade's known
+/// runtime tool directories (treehouse, herdr) when they exist. Hand 0.6
+/// invokes these tools from PATH, and the app process does not inherit a
+/// freshly-written user PATH until restart, so the directories are appended
+/// explicitly (never mutating the app's own environment).
+fn child_path_with_runtime_tools() -> Option<std::ffi::OsString> {
+    let current = std::env::var_os("PATH")?;
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(&current).collect();
+    let mut changed = false;
+    for extra in crate::runtime_tools::runtime_tool_dirs() {
+        if extra.is_dir() && !dirs.contains(&extra) {
+            dirs.push(extra);
+            changed = true;
+        }
+    }
+    if !changed {
+        return None;
+    }
+    std::env::join_paths(dirs).ok()
+}
+
 impl HandRunner {
     /// Run and capture stdout+stderr together with the exit status.
     /// Fixed argument construction only — never a shell string (architecture.md §11).
@@ -150,6 +171,9 @@ impl HandRunner {
 
         if let Some(home) = &self.fleet_home {
             cmd.env("HAND_HOME", absolutize(home));
+        }
+        if let Some(path) = child_path_with_runtime_tools() {
+            cmd.env("PATH", path);
         }
 
         let mut child = match cmd.spawn() {

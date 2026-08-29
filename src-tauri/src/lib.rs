@@ -184,16 +184,12 @@ async fn install_managed_hand() -> Result<String, SerenadeError> {
 
 #[tauri::command]
 async fn install_treehouse() -> Result<String, SerenadeError> {
-    tauri::async_runtime::spawn_blocking(runtime_tools::install_treehouse)
-        .await
-        .map_err(|e| SerenadeError::new(Code::InstallFailed, "Installer task failed", e.to_string()))?
+    runtime_tools::install_treehouse().await
 }
 
 #[tauri::command]
 async fn install_herdr() -> Result<String, SerenadeError> {
-    tauri::async_runtime::spawn_blocking(runtime_tools::install_herdr)
-        .await
-        .map_err(|e| SerenadeError::new(Code::InstallFailed, "Installer task failed", e.to_string()))?
+    runtime_tools::install_herdr().await
 }
 
 #[tauri::command]
