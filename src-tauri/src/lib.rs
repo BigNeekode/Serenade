@@ -56,8 +56,9 @@ fn setup() -> Result<(AppConfig, HandRunner, FleetFiles), SerenadeError> {
             fleet.display()
         )));
     }
+    let binary = environment::resolve_hand_binary(&config.hand_binary_path, &ctx.managed_root);
     let runner = HandRunner {
-        binary: config.hand_binary_path.clone(),
+        binary: binary.to_string_lossy().into_owned(),
         fleet_home: Some(fleet.clone()),
     };
     Ok((config, runner, FleetFiles::new(fleet)))
@@ -71,8 +72,10 @@ fn fleet_home_valid(path: &std::path::Path) -> bool {
 
 /// Runner with no HAND_HOME — for version probes and `hand init`.
 fn global_runner(config: &AppConfig) -> HandRunner {
+    let ctx = CTX.get().expect("ctx");
+    let binary = environment::resolve_hand_binary(&config.hand_binary_path, &ctx.managed_root);
     HandRunner {
-        binary: config.hand_binary_path.clone(),
+        binary: binary.to_string_lossy().into_owned(),
         fleet_home: None,
     }
 }
@@ -180,12 +183,17 @@ async fn install_managed_hand() -> Result<String, SerenadeError> {
 
 #[tauri::command]
 async fn diagnostics_get() -> Result<Diagnostics, SerenadeError> {
-    let config = CTX.get().expect("ctx").config.load();
-    let version = global_runner(&config)
-        .capture(&["--version"], 10)
-        .ok()
-        .and_then(|r| r.ok())
-        .map(|s| s.trim().to_string());
+    let ctx = CTX.get().expect("ctx");
+    let config = ctx.config.load();
+    let binary = environment::resolve_hand_binary(&config.hand_binary_path, &ctx.managed_root);
+    let version = HandRunner {
+        binary: binary.to_string_lossy().into_owned(),
+        fleet_home: None,
+    }
+    .capture(&["--version"], 10)
+    .ok()
+    .and_then(|r| r.ok())
+    .map(|s| s.trim().to_string());
     let fleet_valid = config
         .fleet_path
         .as_ref()
@@ -194,7 +202,7 @@ async fn diagnostics_get() -> Result<Diagnostics, SerenadeError> {
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         mode: "tauri".to_string(),
         tauri_version: Some(tauri::VERSION.to_string()),
-        hand_path: Some(config.hand_binary_path.clone()),
+        hand_path: Some(binary.to_string_lossy().into_owned()),
         hand_version: version,
         fleet_path: config.fleet_path.clone(),
         fleet_valid,

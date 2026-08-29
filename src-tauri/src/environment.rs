@@ -65,13 +65,11 @@ pub trait EnvironmentProbes: Send + Sync {
 
 /// Production probes that delegate to the real host.
 #[derive(Clone)]
-pub struct HostProbes {
-    managed_root: PathBuf,
-}
+pub struct HostProbes;
 
 impl HostProbes {
-    pub fn new(managed_root: PathBuf) -> Self {
-        Self { managed_root }
+    pub fn new() -> Self {
+        Self
     }
 }
 
@@ -451,9 +449,71 @@ impl<P: EnvironmentProbes> EnvironmentInspector<P> {
     }
 }
 
+/// Locate the highest-versioned managed Hand binary under the managed root,
+/// using the real host filesystem (no probe abstraction).
+pub fn find_managed_hand_path(managed_root: &Path) -> Option<PathBuf> {
+    let hand_root = managed_root.join("tools").join("hand");
+    if !hand_root.is_dir() {
+        return None;
+    }
+    let binary_name = if std::env::consts::OS == "windows" {
+        "hand.exe"
+    } else {
+        "hand"
+    };
+    let mut candidates: Vec<(ParsedVersion, PathBuf)> = Vec::new();
+    let entries = std::fs::read_dir(&hand_root).ok()?;
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(version_name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        let Some(version) = parse_version(&version_name) else {
+            continue;
+        };
+        let binary = path.join(binary_name);
+        if binary.is_file() {
+            candidates.push((version, binary));
+        }
+    }
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.into_iter().next().map(|(_, p)| p)
+}
+
+/// Resolve the Hand executable that should actually be run, applying the same
+/// precedence the environment scan uses: explicit custom path > managed install
+/// > system PATH. Returns the resolved absolute path where possible, otherwise
+/// falls back to the configured string so the runner can report a clean error.
+pub fn resolve_hand_binary(configured: &str, managed_root: &Path) -> PathBuf {
+    let configured = configured.trim();
+    let is_placeholder = configured == "hand" || configured.is_empty();
+
+    if !is_placeholder {
+        let path = PathBuf::from(configured);
+        if path.is_file() {
+            return path;
+        }
+        if let Ok(resolved) = which::which(configured) {
+            return resolved;
+        }
+        return path;
+    }
+
+    if let Some(managed) = find_managed_hand_path(managed_root) {
+        return managed;
+    }
+    if let Ok(system) = which::which("hand") {
+        return system;
+    }
+    PathBuf::from("hand")
+}
+
 /// Convenience entry point for the Tauri command using real host probes.
 pub fn scan_environment(config: &AppConfig, managed_root: PathBuf) -> EnvironmentStatus {
-    EnvironmentInspector::new(HostProbes::new(managed_root.clone()), managed_root).scan(config)
+    EnvironmentInspector::new(HostProbes::new(), managed_root).scan(config)
 }
 
 #[cfg(test)]
@@ -653,5 +713,26 @@ mod tests {
         assert_eq!(supervisor.state, ToolState::ConfigurationRequired);
         assert_eq!(supervisor.compatible, Some(false));
         // Supervisor is optional, so overall readiness is not blocked by it alone.
+    }
+
+    #[test]
+    fn find_managed_hand_path_returns_highest_version_binary() {
+        let tmp = std::env::temp_dir().join(format!("serenade-managed-{}-{}", std::process::id(), "find"));
+        let hand_root = tmp.join("tools").join("hand");
+        let bin_name = if cfg!(windows) { "hand.exe" } else { "hand" };
+        for v in ["0.6.0", "0.5.9"] {
+            let dir = hand_root.join(v);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(bin_name), "").unwrap();
+        }
+        let found = find_managed_hand_path(&tmp).unwrap();
+        assert_eq!(found, hand_root.join("0.6.0").join(bin_name));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn find_managed_hand_path_returns_none_when_missing() {
+        let tmp = std::env::temp_dir().join(format!("serenade-managed-{}-{}", std::process::id(), "none"));
+        assert_eq!(find_managed_hand_path(&tmp), None);
     }
 }
