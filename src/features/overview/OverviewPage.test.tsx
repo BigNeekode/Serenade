@@ -45,10 +45,12 @@ describe("Fleet Overview", () => {
     });
   });
 
-  it("flags stale worker heartbeats as a warning", async () => {
+  it("flags stale worker heartbeats as a legacy-derived diagnostic", async () => {
     renderOverview(new MockSerenadeApi());
-    // ag_opus_1 has a stale heartbeat in the mock data
-    expect(await screen.findByText(/stale worker heartbeats/i)).toBeInTheDocument();
+    // ag_opus_1 has a stale heartbeat in the mock data; the Attention surface
+    // now renders it as a legacy-derived diagnostic, not canonical Hand Attention.
+    const diagnostics = await screen.findAllByText(/not canonical Hand Attention/i);
+    expect(diagnostics.length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("ag_opus_1")).toBeInTheDocument();
   });
 });
