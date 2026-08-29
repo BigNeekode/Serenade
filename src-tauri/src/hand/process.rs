@@ -92,6 +92,7 @@ impl HandErrorDoc {
     }
 }
 
+#[derive(Clone)]
 pub struct HandRunner {
     pub binary: String,
     pub fleet_home: Option<PathBuf>,
