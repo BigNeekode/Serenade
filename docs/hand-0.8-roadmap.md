@@ -3,7 +3,7 @@
 > **Purpose:** living tracker for adapting Serenade to Secondhand / `hand` 0.8 without coupling the GUI to unfinished Hand internals.
 >
 > **Last reviewed:** 2026-08-29  
-> **Implementation branch:** `feat/hand-0.8-alignment`  
+> **Implementation branch:** `chore/post-hand-alignment-stabilization`  
 > **Verified production baseline:** Hand 0.6.x  
 > **Upstream 0.8 status:** architecture/spec work in progress; do not implement guessed v19 persistence/read-model details.
 
@@ -121,15 +121,15 @@ Rust currently parses Hand 0.6 JSON/files directly.
 
 ### Architecture
 
-- [~] **S08-001 — Versioned HandGateway boundary**
-  - [x] Add `src/lib/hand/gateway.ts` outside React feature code.
-  - [x] Centralize frontend compatibility policy in `src/lib/hand/compatibility.ts`.
-  - [x] Add Rust `HandLegacyGateway` in `src-tauri/src/hand/gateway.rs`.
-  - [x] Move Supervisor legacy `orient`/`session start` fallback knowledge into the Rust gateway.
-  - [x] Keep React features on Serenade domain/API contracts.
-  - [ ] Put the remaining Rust status/project/task reads behind the legacy gateway instead of general `lib.rs` command code.
-  - [ ] Add `HandV08Gateway` only after the released 0.8 structured contract is stable.
-  - [ ] Remove direct Hand-shape knowledge from general Tauri command code over time.
+  - [~] **S08-001 — Versioned HandGateway boundary**
+    - [x] Add `src/lib/hand/gateway.ts` outside React feature code.
+    - [x] Centralize frontend compatibility policy in `src/lib/hand/compatibility.ts`.
+    - [x] Add Rust `HandLegacyGateway` in `src-tauri/src/hand/gateway.rs`.
+    - [x] Move Supervisor legacy `orient`/`session start` fallback knowledge into the Rust gateway.
+    - [x] Keep React features on Serenade domain/API contracts.
+    - [x] Put the remaining Rust status/project/task reads behind the legacy gateway instead of general `lib.rs` command code.
+    - [ ] Add `HandV08Gateway` only after the released 0.8 structured contract is stable.
+    - [~] Remove direct Hand-shape knowledge from general Tauri command code over time (reads are now behind the gateway; exact legacy mutations still spell direct commands because they are already-exact typed actions).
 
 - [~] **S08-002 — Compatibility/version negotiation**
   - [x] Reuse existing `hand --version` environment probe.
@@ -379,20 +379,44 @@ Decisions:
 - Added provenance-aware Overview Attention shell using explicitly `legacy-derived` indicators until Hand canonical Attention is available.
 - Added shared `useInteraction()` and routed Task workflow mutations/worktree cleanup through the exact-action path.
 
+### 2026-08-29 — Post-alignment stabilization pass
+
+- Created branch `chore/post-hand-alignment-stabilization`.
+- Verified merged repository:
+  - `npm install` succeeded.
+  - `npm run typecheck` passed.
+  - `npm run test` passed (27/27 frontend tests) after updating one stale OverviewPage assertion that expected pre-Attention-panel copy.
+  - `npm run build` passed (production build, chunk-size warning only).
+  - `cargo check` passed cleanly.
+  - `cargo test` passed (15/15 Rust tests).
+- Finished legacy read gateway refactor:
+  - Routed `fleet_status`, `task_status`, `projects`, `config_document`, and `session_start_hint` through `HandLegacyGateway`.
+  - `src-tauri/src/lib.rs` no longer directly spells legacy read CLI commands.
+  - Preserved the TTL fleet-status cache and per-render process efficiency.
+  - Removed the unused `assert_workflow_mutation_compatible` wrapper from `HandLegacyGateway`.
+- Reviewed Supervisor bootstrap: no changes required. Runtime remains ephemeral, first-turn `session start` is a labeled 0.6 compatibility hint, and every turn is instructed to run `hand orient` (or legacy fallback). No private Fleet/project snapshot injection remains.
+- Audited lifecycle semantics:
+  - Consolidated `agents_list` active-Attempt status mapping to reuse `adapter::derive_agent_status`, removing duplicate `agent_state=done → completed` logic.
+  - Added regression test: WorkerReport `done` on a running Attempt does not complete the Task.
+  - Added regression test: legacy Task lineage does not synthesize a Plan.
+- Interaction boundary audit: confirmed all workflow-changing hooks route through `InteractionGateway`; local-only `openWorktree` stays on `SerenadeApi`.
+- Presentation safety: confirmed Task lineage and Attention UI remain explicitly legacy-derived and do not present canonical Hand state.
+- Updated this roadmap.
+
 Remaining transition debt:
 
-- General Rust read commands still parse Hand 0.6 shapes directly instead of going through `HandLegacyGateway`.
-- Serenade still collects a first-turn `session start` hint outside the actual Supervisor runtime for 0.6 compatibility; validate whether it can be removed after live integration testing.
-- Full Task detail still needs separately named report/provider/lifecycle facts.
-- OpenCode is the only **qualified** Supervisor Harness; other Hand-capable Harnesses require separate runtime qualification before being exposed.
-- Canonical FleetSnapshot, Attention, SupervisorOrientation, currentness-aware exact actions, WorkerInput, and WorkerWake remain blocked on released Hand 0.8 contracts.
-- No repository CI workflow is present, and this environment has no Rust toolchain/repository checkout; run `npm run typecheck`, `npm test`, and `cargo test` locally before merge.
+- [x] General Rust read commands still parse Hand 0.6 shapes directly instead of going through `HandLegacyGateway`. **Resolved:** all Rust read commands now route through `HandLegacyGateway`; `lib.rs` no longer spells legacy read CLI commands.
+- [~] Serenade still collects a first-turn `session start` hint outside the actual Supervisor runtime for 0.6 compatibility; validate whether it can be removed after live integration testing.
+- [ ] Full Task detail still needs separately named report/provider/lifecycle facts.
+- [ ] OpenCode is the only **qualified** Supervisor Harness; other Hand-capable Harnesses require separate runtime qualification before being exposed.
+- [ ] Canonical FleetSnapshot, Attention, SupervisorOrientation, currentness-aware exact actions, WorkerInput, and WorkerWake remain blocked on released Hand 0.8 contracts.
+- [ ] No repository CI workflow file is present in the working tree (a prior commit message references CI, but `.github/workflows/` is empty). Validation was run locally on this branch (see update log).
 
 Next safe work before v19 lock:
 
-1. Move remaining legacy read parsing behind `HandLegacyGateway`.
+1. [x] Move remaining legacy read parsing behind `HandLegacyGateway`. **Done.**
 2. Expand full Task detail to separate report Claim, provider activity, and Attempt lifecycle.
-3. Add tests for legacy lineage and Attention derivation.
+3. [x] Add tests for legacy lineage and Attention derivation. **Done.**
 4. Live-test the actual OpenCode Supervisor runtime contract against Hand 0.6, then later Hand 0.7 when released.
 
 **Next upstream checkpoint:** Hand 0.7 release or material `#344/#339` lock/implementation change.
