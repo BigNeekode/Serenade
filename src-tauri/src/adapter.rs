@@ -4,7 +4,7 @@
 //! Important: these are display projections only. Worker/provider state and
 //! WorkerReport claims must not be promoted into canonical lifecycle truth.
 
-use crate::domain::{AgentRun, Task, Worktree};
+use crate::domain::{AgentRun, AttemptProjection, Task, TaskLineage, Worktree};
 use crate::fleet_files::FleetFiles;
 use crate::hand::model::StatusJson;
 
@@ -103,6 +103,12 @@ pub fn to_task(s: &StatusJson, files: &FleetFiles, held: bool) -> Task {
     } else {
         None
     };
+    let active_attempt = s.attempt_ordinal.map(|ordinal| AttemptProjection {
+        ordinal,
+        lifecycle: s.attempt_lifecycle.clone(),
+        harness: s.harness.clone(),
+        model: s.model.clone(),
+    });
     Task {
         id: s.id.clone(),
         project_id: s.project.clone(),
@@ -129,6 +135,13 @@ pub fn to_task(s: &StatusJson, files: &FleetFiles, held: bool) -> Task {
                 .unwrap_or_else(|| w.clone())
         }),
         attempts,
+        lineage: Some(TaskLineage {
+            source: "legacy".to_string(),
+            // Hand 0.6 has no canonical v19 Plan projection. Do not manufacture
+            // one from brief/task-kind data merely to fill the future shape.
+            plan: None,
+            active_attempt,
+        }),
         created_at: s.created_at.clone().unwrap_or_default(),
         updated_at: s.last_report_at
             .clone()
