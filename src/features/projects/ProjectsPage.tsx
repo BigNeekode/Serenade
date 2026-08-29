@@ -1,24 +1,36 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import clsx from "clsx";
-import { GitBranch, ArrowRight } from "lucide-react";
+import { GitBranch, ArrowRight, Plus } from "lucide-react";
 import { PageContainer } from "@/components/layout/AppShell";
 import { LastUpdated } from "@/components/common/LastUpdated";
 import { Card } from "@/components/ui/card";
 import { Badge, Mono } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton, EmptyState, ErrorState } from "@/components/ui/feedback";
 import { useProjects } from "@/hooks/use-projects";
 import { useTasks } from "@/hooks/use-tasks";
 import { formatRelativeTime } from "@/lib/format";
+import { ProjectCreateDialog } from "./ProjectCreateDialog";
 
 export function ProjectsPage() {
   const projects = useProjects();
   const tasks = useTasks();
+  const [createOpen, setCreateOpen] = useState(false);
 
   return (
     <PageContainer
       title="Projects"
       subtitle="Repositories managed by your hand fleet"
-      actions={<LastUpdated query={projects} />}
+      actions={
+        <>
+          <LastUpdated query={projects} />
+          <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus size={13} />
+            New Project
+          </Button>
+        </>
+      }
     >
       {projects.isError && <ErrorState error={projects.error} onRetry={() => void projects.refetch()} />}
       {projects.isLoading && (
@@ -29,7 +41,16 @@ export function ProjectsPage() {
         </div>
       )}
       {projects.data?.length === 0 && (
-        <EmptyState title="No projects found" description="Add projects to your hand fleet to see them here." />
+        <EmptyState
+          title="No projects found"
+          description="Add or create a project to your hand fleet to see it here."
+          action={
+            <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus size={13} />
+              New Project
+            </Button>
+          }
+        />
       )}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {projects.data?.map((project) => {
@@ -83,6 +104,7 @@ export function ProjectsPage() {
           );
         })}
       </div>
+      <ProjectCreateDialog open={createOpen} onClose={() => setCreateOpen(false)} />
     </PageContainer>
   );
 }
