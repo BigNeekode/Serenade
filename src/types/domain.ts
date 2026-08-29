@@ -159,7 +159,8 @@ export type SupervisorHarness = "opencode";
 export interface AppConfig {
   handBinaryPath: string | null;
   fleetPath: string | null;
-  supervisorHarness: SupervisorHarness;
+  /** Optional for backward compatibility with existing mock/saved GUI config. */
+  supervisorHarness?: SupervisorHarness;
   preferredEditor: PreferredEditor;
   customEditorPath?: string | null;
   refreshProfile: "slow" | "default" | "fast";
