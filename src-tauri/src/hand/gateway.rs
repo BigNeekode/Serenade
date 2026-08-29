@@ -1,5 +1,6 @@
 use crate::error::SerenadeError;
 use crate::hand::compatibility::{self, HandCompatibility, HandContract};
+use crate::hand::model::{FleetJson, ProjectJson, StatusJson};
 use crate::hand::HandRunner;
 use std::path::Path;
 
@@ -20,11 +21,10 @@ impl SupervisorContextSource {
 
 /// Adapter for Serenade's currently implemented Hand CLI contract.
 ///
-/// This type intentionally owns CLI fallback knowledge. Presentation and
-/// Supervisor code should ask for semantic operations (fresh orientation,
-/// compatibility) rather than branching on Hand command availability itself.
-/// A future `HandV08Gateway` can implement the released 0.8 projection/action
-/// contract beside this adapter without exposing v19 persistence to Serenade.
+/// This type intentionally owns legacy CLI vocabulary and fallback knowledge.
+/// Presentation/Tauri code should ask for semantic reads instead of spelling
+/// legacy commands itself. A future `HandV08Gateway` can implement released
+/// 0.8 projections/actions beside this adapter without exposing v19 persistence.
 pub struct HandLegacyGateway {
     runner: HandRunner,
 }
@@ -40,6 +40,31 @@ impl HandLegacyGateway {
 
     pub fn assert_workflow_mutation_compatible(&self) -> Result<(), SerenadeError> {
         self.runner.assert_workflow_mutation_compatible()
+    }
+
+    /// Legacy fleet/status projection used by the 0.6 compatibility adapter.
+    pub fn fleet_status(&self) -> Result<FleetJson, SerenadeError> {
+        self.runner.json(&["status", "--json"], 20)
+    }
+
+    /// Legacy single-task status projection.
+    pub fn task_status(&self, task_id: &str) -> Result<StatusJson, SerenadeError> {
+        self.runner.json(&["status", task_id, "--json"], 20)
+    }
+
+    /// Registered project projection for the legacy adapter.
+    pub fn projects(&self) -> Result<Vec<ProjectJson>, SerenadeError> {
+        self.runner.json(&["project", "list", "--json"], 15)
+    }
+
+    /// Legacy route/provider config document. Parsing remains isolated in the
+    /// legacy adapter path; a future canonical gateway should expose typed data.
+    pub fn config_document(&self) -> Result<String, SerenadeError> {
+        self.runner.expect(&["config"], 15)
+    }
+
+    pub fn session_start_hint(&self) -> Result<String, SerenadeError> {
+        self.runner.expect(&["session", "start"], 20)
     }
 
     /// Presentation-side read-only context for a Supervisor turn.
