@@ -93,7 +93,7 @@ Read-only diagnostics should remain available where safe. Unknown/new contracts 
 
 Legacy Serenade assembled first-turn truth from `session start + status JSON + project JSON + chat history`. Target behavior is actual Supervisor runtime bootstrap plus fresh per-turn orientation.
 
-**Branch progress:** private fleet/project JSON is no longer injected into the Supervisor prompt. Serenade performs a read-only preflight through the configured Rust Hand gateway and the actual OpenCode Supervisor runtime is explicitly instructed to run its own `hand session start`/`hand orient` contract. The Tauri caller still computes unused legacy fleet/project JSON on the first turn, so this remains partial.
+**Branch progress:** private fleet/project JSON is no longer injected into the Supervisor prompt. Serenade performs a read-only preflight through the configured Rust Hand gateway and the selected qualified Supervisor runtime is explicitly instructed to run its own `hand session start`/`hand orient` contract. The Tauri caller still computes unused legacy fleet/project JSON on the first turn, so this remains partial.
 
 ### M02 — Lifecycle flattening
 
@@ -105,7 +105,7 @@ Legacy adapters collapse some provider/report signals into convenient statuses.
 
 Rust currently parses Hand 0.6 JSON/files directly.
 
-**Branch progress:** both frontend and Rust now have explicit Hand compatibility/gateway seams. `src-tauri/src/hand/gateway.rs` owns legacy Supervisor fallback behavior; `process.rs` enforces fail-closed Hand mutation compatibility before executing legacy workflow commands. General Tauri command code still directly consumes Hand 0.6 models, so the migration is not complete.
+**Branch progress:** both frontend and Rust now have explicit Hand compatibility/gateway seams. `src-tauri/src/hand/gateway.rs` owns legacy Supervisor fallback behavior; `process.rs` enforces fail-closed Hand mutation compatibility before executing legacy workflow commands. Brief creation also checks compatibility before touching disk. General Tauri command code still directly consumes Hand 0.6 models, so the migration is not complete.
 
 ### M04 — Task-centric UI hides Plan/Attempt lineage
 
@@ -138,8 +138,8 @@ Current Overview uses local heuristics. Once Hand publishes canonical `Attention
   - [x] Show contract + mutation state in Settings/Diagnostics.
   - [x] Gate workflow mutations in `TauriSerenadeApi`.
   - [x] Gate legacy Hand workflow commands again inside `HandRunner`, so direct command execution cannot silently bypass frontend policy.
+  - [x] Guard pre-spawn brief creation before any filesystem side effect, closing the direct `task_create` raw-invoke gap.
   - [x] Add frontend and Rust unit tests for version classification.
-  - [~] Close the raw-`invoke` gap completely: `task_create` still writes its operator brief before `hand spawn` reaches the process-level guard; add a command-entry compatibility check when `lib.rs` is refactored.
   - [ ] Qualify Hand 0.7 after its actual release before enabling its mutations.
 
 ### Supervisor
@@ -160,9 +160,13 @@ Current Overview uses local heuristics. Once Hand publishes canonical `Attention
   - [ ] Remove wasted fleet/project JSON assembly from `lib.rs`.
   - [ ] Consider removing Serenade's externally collected first-turn `session start` hint entirely once actual Supervisor runtime execution is integration-tested.
 
-- [ ] **S08-012 — Provider-neutral Supervisor Harness**
-  - Replace hardcoded OpenCode with explicit Supervisor Harness capability/config.
-  - Keep Supervisor Harness config distinct from Worker Attempt routing.
+- [~] **S08-012 — Provider-neutral Supervisor Harness**
+  - [x] Add a Serenade-owned `supervisorHarness` setting separate from Hand Worker routes/profiles.
+  - [x] Add an explicit qualified runtime dispatch boundary in `supervisor.rs`.
+  - [x] Keep OpenCode as the only selectable/accepted adapter while it is the only Serenade-qualified headless/session path.
+  - [x] Fail closed before spawning when an unqualified Harness value reaches the runtime adapter.
+  - [x] Surface the qualified Supervisor Harness in Settings/Diagnostics.
+  - [ ] Qualify Claude/Codex/Pi/other Supervisor Harness adapters only after their actual headless/session/resume/output contracts are verified.
 
 ### Interaction
 
@@ -244,6 +248,19 @@ Tauri commands
 Rust HandLegacyGateway / HandRunner
       ↓
 legacy Hand 0.6 CLI contract
+```
+
+Supervisor is a sibling capability rather than a Worker route:
+
+```text
+Serenade Supervisor setting
+      ↓
+qualified Supervisor Harness adapter
+      └─ OpenCode (qualified today)
+
+Hand Worker routes/profiles
+      ↓
+Worker Harness selection per Attempt
 ```
 
 Target:
@@ -346,22 +363,32 @@ Implemented:
 - `HandRunner` now re-checks the installed Hand version before legacy workflow commands (`spawn`, `send`, `reopen`, `teardown`, `promote`) and refuses unqualified contracts.
 - Supervisor preflight now uses the configured Hand binary/gateway rather than a hardcoded `hand` executable from PATH.
 - Verified 0.6 Supervisor preflight no longer wastes a failed `orient` probe; 0.7+/unknown prefers `orient`.
+- Brief creation now checks compatibility before creating directories/files, so direct task-create invocation cannot leave a brief on an unqualified Hand contract.
+
+### 2026-08-29 — Supervisor Harness qualification seam
+
+Implemented:
+
+- Added Serenade `supervisorHarness` configuration, deliberately separate from Hand Worker routing.
+- Added an explicit qualified runtime adapter dispatch point in `supervisor.rs`.
+- OpenCode remains the only qualified/selectable adapter; arbitrary Harness executable names are not accepted as configuration.
+- Runtime dispatch fails closed with `UNSUPPORTED_CAPABILITY` for an unqualified adapter value instead of guessing command flags/session semantics.
+- Settings now explains the separation and shows the active qualified Supervisor Harness in diagnostics.
 
 Remaining transition debt:
 
-- `task_create` can still write a brief before its later `spawn` call reaches the Rust process guard when invoked directly; command-entry gating should close that gap.
 - General `lib.rs` reads still parse Hand 0.6 shapes directly instead of going through `HandLegacyGateway`.
 - Tauri still computes unused fleet/project JSON for the first Supervisor turn.
 - `lib.rs` still has a duplicate active-attempt `agent_state=done → completed` presentation mapping.
-- OpenCode remains hardcoded as the Supervisor Harness.
+- OpenCode is the only **qualified** Supervisor Harness; other Hand-capable Harnesses require separate runtime qualification before being exposed.
 - No repository CI workflow is present, and this environment has no Rust toolchain/repository checkout; run `npm run typecheck`, `npm test`, and `cargo test` locally before merge.
 
 Next implementation candidates before v19 lock:
 
-1. Refactor mutation command entry points so compatibility is checked **before** any brief/local side effect.
-2. Move status/project/task reads behind `HandLegacyGateway` and delete unused Supervisor JSON assembly.
-3. Remove the duplicate lifecycle-flattening code in `lib.rs`.
-4. Migrate remaining exact mutation call sites through `InteractionGateway`.
-5. Add progressive Task → Plan → Attempt presentation scaffolding with explicit unavailable legacy fields.
+1. Move status/project/task reads behind `HandLegacyGateway` and delete unused Supervisor JSON assembly.
+2. Remove the duplicate lifecycle-flattening code in `lib.rs`.
+3. Migrate remaining exact mutation call sites through `InteractionGateway`.
+4. Add progressive Task → Plan → Attempt presentation scaffolding with explicit unavailable legacy fields.
+5. Add first-class Attention presentation types/shell without inventing canonical Hand 0.8 data.
 
 **Next upstream checkpoint:** Hand 0.7 release or material `#344/#339` lock/implementation change.
