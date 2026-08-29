@@ -80,16 +80,27 @@ On the current Hand 0.6 compatibility adapter, canonical Plan data does not exis
 - GitHub Actions CI for frontend typecheck/tests/build plus Rust check/tests.
 - Dark developer-tool UI with dense operational views and monospace identifiers.
 
-## Requirements
+## End-user runtime requirements
+
+For the packaged Serenade application you need:
+
+| Tool | Why |
+|---|---|
+| Windows 10/11 (x86_64) | First supported platform for Quick Setup |
+| [Git](https://git-scm.com) | Project clones and worktree metadata (detect-only; install manually if missing) |
+| [Secondhand (`hand`)](https://github.com/atqamz/hand) **0.6.x** | Current verified fleet/task integration |
+| At least one Hand-supported coding harness | Worker execution through Hand profiles/routes |
+| [OpenCode](https://opencode.ai) | **Optional** — only for Serenade Supervisor chat |
+
+Serenade can install a qualified `hand` 0.6.x binary for you under its own application-data directory. It does not require Node.js, Rust, or changes to your global `PATH`.
+
+### Build-from-source requirements
 
 | Tool | Why |
 |---|---|
 | [Node.js](https://nodejs.org) 22+ | Frontend toolchain |
 | [Rust](https://rustup.rs) | Tauri desktop build |
-| [Git](https://git-scm.com) | Project clones and worktree metadata |
-| [Secondhand (`hand`)](https://github.com/atqamz/hand) **0.6.x** | Current verified fleet/task integration |
-| At least one Hand-supported coding harness | Worker execution through Hand profiles/routes |
-| [OpenCode](https://opencode.ai) | **Currently required only for Serenade Supervisor chat** |
+| Tauri build dependencies | See [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform |
 
 ### Hand compatibility
 
@@ -106,7 +117,9 @@ Diagnostics remain available where safe. Do not interpret this table as a promis
 
 ### Install Secondhand
 
-The recommended path is Secondhand's documented bootstrap, which installs `hand` and its current runtime dependencies.
+**Quick Setup (recommended for packaged builds):** Serenade can download and install a qualified Hand 0.6.x Windows release asset automatically, verify its SHA-256 checksum, and place it in the managed tool directory. No global `PATH` change is required.
+
+**Manual / existing environment:** Use Secondhand's documented bootstrap or manual release binary.
 
 Linux / macOS:
 
@@ -128,6 +141,45 @@ hand doctor
 
 See the [Secondhand repository](https://github.com/atqamz/hand) for manual and platform-specific installation options.
 
+## Quick Setup
+
+On first launch Serenade opens a **Quick Setup** wizard if it has not been completed before:
+
+1. **Welcome** — choose to let Serenade prepare tools or use an existing environment.
+2. **Environment Check** — read-only scan for Git, Hand, Fleet, and Supervisor Harness.
+3. **Fleet Location** — choose where your Fleet home lives (default: `%USERPROFILE%\Serenade\fleet`).
+4. **Setup Plan** — preview what Serenade will do before any download or installation.
+5. **Prepare Environment** — Serenade downloads and installs a qualified Hand 0.6.x release asset, verifies its checksum, and initializes the Fleet through `hand init`.
+6. **Supervisor (optional)** — detect or skip OpenCode setup.
+7. **First Project** — add a Git URL, local repository, or create a new local-only project.
+8. **Ready** — enter the main Serenade UI.
+
+You can reopen the wizard or manage the environment later from **Settings → Environment**. The same read-only scan and repair actions are available there.
+
+### Using an existing environment
+
+If you already have Hand 0.6.x and a Fleet home, choose **Use existing environment** in the wizard or set the paths directly in **Settings → Fleet paths**:
+
+- **Hand binary path** — an absolute path or a name resolvable on `PATH`.
+- **Fleet path** — a directory already initialized with `hand init`.
+
+Serenade will detect whether the configured Hand is managed, system, or custom and will not overwrite a healthy system/custom installation.
+
+### Managed tool storage
+
+Tools Serenade installs for you live under its application-data directory, conceptually:
+
+```text
+%LOCALAPPDATA%\Serenade\
+├─ config\        # Serenade-owned config (e.g. serenade-config.json)
+├─ cache\         # downloads and staging
+├─ logs\          # application logs
+└─ tools\         # managed binaries
+   └─ hand\0.6.0\hand.exe
+```
+
+Serenade never installs `latest` blindly. The qualified Hand version is pinned in the installer manifest and verified against the official release checksums before activation.
+
 ## Getting started
 
 ### 1. Clone and launch Serenade
@@ -147,20 +199,28 @@ npx tauri build
 
 Tauri places release artifacts under `src-tauri/target/release/` and platform bundles under `src-tauri/target/release/bundle/` when bundle generation is available for the host platform.
 
-On first launch, Serenade validates the configured `hand` binary and fleet path and shows setup guidance when something is missing.
+On first launch, Serenade runs the **Quick Setup** wizard if the environment is not ready. You can also open it later from **Settings → Environment**.
 
 ### 2. Create or select a fleet home
 
-A *fleet home* is the directory created by `hand init`. Serenade can initialize one from its setup screen, or you can create it yourself:
+A *fleet home* is the directory created by `hand init`. Serenade can initialize one from Quick Setup, or you can create it yourself:
 
 ```sh
 hand init ~/secondhand-fleet
 hand doctor
 ```
 
-Then set that directory in **Serenade → Settings → Fleet path** and save the configuration.
+Then set that directory in **Serenade → Settings → Fleet paths** and save the configuration.
 
 ### 3. Register a project
+
+From Quick Setup or the Projects page you can add:
+
+- a Git repository URL (`https://...` or `git@...`)
+- an existing local Git repository
+- a new local-only project (`hand project create`)
+
+Or from a terminal:
 
 ```sh
 hand project add https://github.com/you/your-repo
@@ -279,6 +339,9 @@ src-tauri/src/        Rust backend
 ├─ supervisor.rs      qualified headless Supervisor Harness runtime
 ├─ adapter.rs         legacy Hand observations/lifecycle → presentation mapping
 ├─ fleet_files.rs     briefs, reports, status streams, event log
+├─ environment.rs     read-only environment inspector (Git/Hand/Fleet/Supervisor)
+├─ fleet.rs           Fleet destination validation and safe initialization
+├─ installer.rs       managed Hand installer provider (Windows MVP)
 ├─ git.rs, local.rs   Git metadata and local editor/folder/terminal launching
 └─ config.rs, error.rs, domain.rs
 
@@ -311,6 +374,12 @@ The `docs/` directory contains the deeper engineering material:
 - [`docs/tasks.md`](docs/tasks.md) — implementation backlog and status.
 
 ## Troubleshooting
+
+### Rerun Quick Setup or repair the environment
+
+Open **Settings → Environment** to rescan, install/reinstall managed Hand, set a custom Hand path, and check Fleet health. If the environment becomes unhealthy after setup, the same page offers repair actions rather than requiring terminal commands.
+
+The first-run wizard can be retriggered by clearing `setupCompleted` in Serenade's config file (`%LOCALAPPDATA%\Serenade\config\serenade-config.json`), but **Settings → Environment** is the normal place to manage tools after onboarding.
 
 The following runtime notes apply to the currently verified Hand 0.6 stack.
 

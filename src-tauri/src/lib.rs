@@ -1,10 +1,13 @@
 mod adapter;
 mod config;
 mod domain;
+mod environment;
 mod error;
+mod fleet;
 mod fleet_files;
 mod git;
 mod hand;
+mod installer;
 mod local;
 mod supervisor;
 
@@ -24,6 +27,7 @@ use tauri::Manager;
 
 struct AppCtx {
     config: ConfigStore,
+    managed_root: PathBuf,
     fleet_cache: Mutex<Option<(Instant, Arc<FleetJson>)>>,
     git_cache: Mutex<HashMap<String, (Instant, git::GitInfo)>>,
     supervisor_sessions: Mutex<HashMap<String, String>>,
@@ -147,60 +151,24 @@ async fn config_update(input: serde_json::Value) -> Result<AppConfig, SerenadeEr
 
 #[tauri::command]
 async fn environment_validate() -> Result<EnvironmentStatus, SerenadeError> {
-    let config = CTX.get().expect("ctx").config.load();
-    let mut issues = Vec::new();
-
-    let version_result = global_runner(&config).capture(&["--version"], 10);
-    let (hand_found, hand_version) = match version_result {
-        Ok(Ok(stdout)) => (true, Some(stdout.trim().to_string())),
-        Ok(Err(doc)) => {
-            issues.push(format!("hand --version failed: {}", doc.message));
-            (false, None)
-        }
-        Err(e) => {
-            issues.push(e.message.clone());
-            (false, None)
-        }
-    };
-    if !hand_found {
-        issues.push("hand executable not found — configure the binary path in Settings.".into());
-    }
-
-    let fleet_path = config
-        .fleet_path
-        .clone()
-        .filter(|p| !p.trim().is_empty());
-    let fleet_valid = fleet_path
-        .as_ref()
-        .map(|p| fleet_home_valid(PathBuf::from(p).as_path()))
-        .unwrap_or(false);
-    if !fleet_valid {
-        issues.push("Fleet path is not set or is not a secondhand home (needs state/hand.db).".into());
-    }
-
-    Ok(EnvironmentStatus {
-        ok: hand_found && fleet_valid,
-        hand_found,
-        hand_path: Some(config.hand_binary_path.clone()),
-        hand_version,
-        fleet_valid,
-        fleet_path,
-        issues,
-    })
+    let ctx = CTX.get().expect("ctx");
+    let config = ctx.config.load();
+    Ok(environment::scan_environment(&config, ctx.managed_root.clone()))
 }
 
 #[tauri::command]
-async fn fleet_init(path: String) -> Result<(), SerenadeError> {
+async fn fleet_init(path: String, force: Option<bool>) -> Result<(), SerenadeError> {
     let config = CTX.get().expect("ctx").config.load();
-    if path.trim().is_empty() {
-        return Err(SerenadeError::new(
-            Code::InvalidPath,
-            "Invalid path",
-            "Fleet path must not be empty.",
-        ));
-    }
-    global_runner(&config).expect(&["init", &path], 90)?;
+    let runner = global_runner(&config);
+    fleet::prepare_fleet(PathBuf::from(&path).as_path(), &runner, force.unwrap_or(false))?;
     Ok(())
+}
+
+#[tauri::command]
+async fn install_managed_hand() -> Result<String, SerenadeError> {
+    let ctx = CTX.get().expect("ctx");
+    let result = installer::install_managed_hand(&ctx.managed_root).await?;
+    Ok(format!("Installed Hand {} at {}", result.version, result.path.display()))
 }
 
 #[tauri::command]
@@ -278,6 +246,39 @@ async fn project_get(project_id: String) -> Result<Project, SerenadeError> {
             )
             .not_recoverable()
         })
+}
+
+#[tauri::command]
+async fn project_add(source: String) -> Result<(), SerenadeError> {
+    let (_, runner, _) = setup()?;
+    runner.assert_workflow_mutation_compatible()?;
+    if source.trim().is_empty() {
+        return Err(SerenadeError::new(
+            Code::InvalidPath,
+            "Invalid project source",
+            "Project source must not be empty.",
+        ));
+    }
+    runner.expect(&["project", "add", &source], 120)?;
+    invalidate_fleet_cache();
+    Ok(())
+}
+
+#[tauri::command]
+async fn project_create(name: String) -> Result<(), SerenadeError> {
+    let (_, runner, _) = setup()?;
+    runner.assert_workflow_mutation_compatible()?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(SerenadeError::new(
+            Code::InvalidPath,
+            "Invalid project name",
+            "Project name must not be empty.",
+        ));
+    }
+    runner.expect(&["project", "create", name], 120)?;
+    invalidate_fleet_cache();
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1064,9 +1065,11 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
-            let _ = std::fs::create_dir_all(&data_dir);
+            let managed_root = data_dir.join("Serenade");
+            let _ = std::fs::create_dir_all(&managed_root);
             let _ = CTX.set(AppCtx {
                 config: ConfigStore::new(data_dir),
+                managed_root,
                 fleet_cache: Mutex::new(None),
                 git_cache: Mutex::new(HashMap::new()),
                 supervisor_sessions: Mutex::new(HashMap::new()),
@@ -1085,9 +1088,12 @@ pub fn run() {
             config_update,
             environment_validate,
             fleet_init,
+            install_managed_hand,
             diagnostics_get,
             projects_list,
             project_get,
+            project_add,
+            project_create,
             tasks_list,
             task_get,
             agents_list,

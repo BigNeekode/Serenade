@@ -146,12 +146,16 @@ export function Topbar({ onNewTask }: { onNewTask: () => void }) {
           </IconButton>
         </Link>
         <Tooltip
-          label={env?.ok ? `hand ${env.handVersion ?? ""} • fleet ready`.trim() : "Environment issues — open Settings"}
+          label={
+            env?.ready
+              ? `hand ${env.tools.find((t) => t.id === "hand")?.version ?? ""} • fleet ready`.trim()
+              : "Environment issues — open Settings"
+          }
         >
           <span
             className={clsx(
               "h-2 w-2 rounded-full",
-              env?.ok ? "bg-success" : env ? "bg-warning" : "bg-fg-subtle",
+              env?.ready ? "bg-success" : env ? "bg-warning" : "bg-fg-subtle",
             )}
             aria-label="Environment status"
           />

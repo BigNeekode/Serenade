@@ -45,8 +45,11 @@ export class TauriSerenadeApi implements SerenadeApi {
   async getDiagnostics(): Promise<Diagnostics> {
     return invoke("diagnostics_get");
   }
-  async initializeFleet(path: string): Promise<void> {
-    return invoke("fleet_init", { path });
+  async initializeFleet(path: string, force?: boolean): Promise<void> {
+    return invoke("fleet_init", { path, force: force ?? false });
+  }
+  async installManagedHand(): Promise<string> {
+    return invoke("install_managed_hand");
   }
 
   async listProjects(): Promise<Project[]> {
@@ -54,6 +57,14 @@ export class TauriSerenadeApi implements SerenadeApi {
   }
   async getProject(projectId: string): Promise<Project> {
     return invoke("project_get", { projectId });
+  }
+  async addProject(source: string): Promise<void> {
+    await this.hand.assertMutationCompatible();
+    return invoke("project_add", { source });
+  }
+  async createProject(name: string): Promise<void> {
+    await this.hand.assertMutationCompatible();
+    return invoke("project_create", { name });
   }
 
   async listTasks(projectId?: string): Promise<Task[]> {

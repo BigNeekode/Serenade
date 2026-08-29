@@ -37,8 +37,8 @@ export function StatusBar() {
         errors <span className={failed > 0 ? "text-danger tabular-nums" : "tabular-nums"}>{failed}</span>
       </span>
       <span className="ml-auto truncate">
-        {env?.ok
-          ? `hand ${env.handVersion} • ${env.fleetPath}`
+        {env?.ready
+          ? `hand ${env.tools.find((t) => t.id === "hand")?.version ?? ""} • ${env.fleet.path ?? ""}`.trim()
           : env
             ? "environment issues — open Settings"
             : "checking environment…"}

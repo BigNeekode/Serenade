@@ -210,17 +210,74 @@ pub struct RoutesPayload {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EnvironmentPlatform {
+    pub os: String,
+    pub arch: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EnvironmentStatus {
-    pub ok: bool,
-    pub hand_found: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hand_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hand_version: Option<String>,
-    pub fleet_valid: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fleet_path: Option<String>,
+    pub platform: EnvironmentPlatform,
+    pub tools: Vec<ToolStatus>,
+    pub fleet: FleetHealth,
+    pub ready: bool,
     pub issues: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setup_completed: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolOwnership {
+    Managed,
+    System,
+    Custom,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolState {
+    Missing,
+    Installing,
+    Installed,
+    ConfigurationRequired,
+    AuthenticationRequired,
+    Incompatible,
+    Unhealthy,
+    Ready,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolStatus {
+    pub id: String,
+    pub label: String,
+    pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<ToolOwnership>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    pub state: ToolState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compatible: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_action: Option<String>,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FleetHealth {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    pub state: ToolState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

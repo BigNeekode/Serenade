@@ -47,6 +47,8 @@ pub struct AppConfig {
     pub reduced_motion: bool,
     #[serde(default)]
     pub notifications: NotificationsConfig,
+    #[serde(default)]
+    pub setup_completed: bool,
 }
 
 fn default_hand_path() -> String {
@@ -81,6 +83,7 @@ impl Default for AppConfig {
             density: default_density(),
             reduced_motion: false,
             notifications: NotificationsConfig::default(),
+            setup_completed: false,
         }
     }
 }
@@ -177,6 +180,11 @@ impl ConfigStore {
                             }
                         }
                         config.notifications = notif;
+                    }
+                }
+                "setupCompleted" => {
+                    if let Some(b) = value.as_bool() {
+                        config.setup_completed = b;
                     }
                 }
                 _ => {}

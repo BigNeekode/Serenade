@@ -1,11 +1,36 @@
 import { useState } from "react";
 import { CircleCheck, CircleX, Loader2, Sparkles } from "lucide-react";
-import type { EnvironmentStatus } from "@/types/domain";
+import type { EnvironmentStatus, ToolStatus } from "@/types/domain";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { useUpdateConfig } from "@/hooks/use-config";
 import { useApi } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
+
+function toolStateIcon(state: ToolStatus["state"]) {
+  switch (state) {
+    case "ready":
+    case "installed":
+      return <CircleCheck size={14} className="text-success" />;
+    case "missing":
+    case "incompatible":
+    case "unhealthy":
+    case "configuration-required":
+    case "authentication-required":
+      return <CircleX size={14} className="text-danger" />;
+    case "installing":
+      return <Loader2 size={14} className="animate-spin text-fg-muted" />;
+    default:
+      return <CircleX size={14} className="text-warning" />;
+  }
+}
+
+function toolSummary(tool: ToolStatus) {
+  const parts: string[] = [tool.label];
+  if (tool.version) parts.push(`(${tool.version})`);
+  if (tool.ownership) parts.push(`— ${tool.ownership}`);
+  return parts.join(" ");
+}
 
 export function SetupScreen({
   env,
@@ -14,12 +39,17 @@ export function SetupScreen({
   env: EnvironmentStatus;
   onRevalidate: () => void;
 }) {
+  const handTool = env.tools.find((t) => t.id === "hand");
+  const fleet = env.fleet;
   const updateConfig = useUpdateConfig();
   const api = useApi();
   const toast = useToast();
-  const [handPath, setHandPath] = useState(env.handPath ?? "hand");
-  const [fleetPath, setFleetPath] = useState(env.fleetPath ?? "");
+  const [handPath, setHandPath] = useState(handTool?.path ?? "hand");
+  const [fleetPath, setFleetPath] = useState(fleet.path ?? "");
   const [initBusy, setInitBusy] = useState(false);
+
+  const handFound = handTool?.state === "ready";
+  const fleetValid = fleet.state === "ready";
 
   const save = async () => {
     try {
@@ -57,17 +87,6 @@ export function SetupScreen({
     }
   };
 
-  const statusRow = (ok: boolean, label: string) => (
-    <div className="flex items-center gap-2 text-xs">
-      {ok ? (
-        <CircleCheck size={14} className="text-success" />
-      ) : (
-        <CircleX size={14} className="text-danger" />
-      )}
-      <span className={ok ? "text-fg-muted" : "text-danger"}>{label}</span>
-    </div>
-  );
-
   return (
     <div className="flex min-h-full items-center justify-center bg-base px-4">
       <div className="w-full max-w-md">
@@ -81,8 +100,24 @@ export function SetupScreen({
 
         <div className="rounded-xl border border-line bg-panel p-5">
           <div className="mb-4 space-y-1.5 rounded-lg bg-surface p-3">
-            {statusRow(env.handFound, env.handFound ? `hand found (${env.handVersion ?? "version unknown"})` : "hand executable not found")}
-            {statusRow(env.fleetValid, env.fleetValid ? `fleet valid (${env.fleetPath})` : "fleet missing or invalid")}
+            {env.tools.map((tool) => (
+              <div key={tool.id} className="flex items-center gap-2 text-xs">
+                {toolStateIcon(tool.state)}
+                <span className={tool.state === "ready" || tool.state === "installed" ? "text-fg-muted" : "text-danger"}>
+                  {toolSummary(tool)}
+                </span>
+              </div>
+            ))}
+            <div className="flex items-center gap-2 text-xs">
+              {fleetValid ? (
+                <CircleCheck size={14} className="text-success" />
+              ) : (
+                <CircleX size={14} className="text-danger" />
+              )}
+              <span className={fleetValid ? "text-fg-muted" : "text-danger"}>
+                {fleetValid ? `fleet valid (${fleet.path})` : "fleet missing or invalid"}
+              </span>
+            </div>
             {env.issues.map((issue) => (
               <p key={issue} className="pl-5 text-[11px] text-warning">
                 {issue}
@@ -101,7 +136,7 @@ export function SetupScreen({
                 placeholder="e.g. C:\\dev\\hand-fleet"
               />
             </Field>
-            {env.handFound && !env.fleetValid && (
+            {handFound && !fleetValid && (
               <Button variant="secondary" size="md" className="w-full" onClick={initialize} disabled={initBusy}>
                 {initBusy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
                 Initialize a fleet at this path (hand init)

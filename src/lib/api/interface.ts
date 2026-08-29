@@ -27,11 +27,14 @@ export interface SerenadeApi {
   updateConfig(input: Partial<AppConfig>): Promise<AppConfig>;
   validateEnvironment(): Promise<EnvironmentStatus>;
   getDiagnostics(): Promise<Diagnostics>;
-  initializeFleet(path: string): Promise<void>;
+  initializeFleet(path: string, force?: boolean): Promise<void>;
+  installManagedHand(): Promise<string>;
 
   // Reads
   listProjects(): Promise<Project[]>;
   getProject(projectId: string): Promise<Project>;
+  addProject(source: string): Promise<void>;
+  createProject(name: string): Promise<void>;
   listTasks(projectId?: string): Promise<Task[]>;
   getTask(taskId: string): Promise<Task>;
   listAgents(): Promise<AgentRun[]>;

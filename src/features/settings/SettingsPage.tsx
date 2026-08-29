@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { CircleCheck, CircleX, Copy } from "lucide-react";
 import { PageContainer } from "@/components/layout/AppShell";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -11,10 +12,12 @@ import {
   useEnvironment,
   useDiagnostics,
 } from "@/hooks/use-config";
+import { EnvironmentSection } from "./EnvironmentSection";
 import { compatibilityFromEnvironment } from "@/lib/hand/compatibility";
 import type { AppConfig } from "@/types/domain";
 
 export function SettingsPage() {
+  const queryClient = useQueryClient();
   const config = useAppConfig();
   const env = useEnvironment();
   const diagnostics = useDiagnostics();
@@ -76,8 +79,14 @@ export function SettingsPage() {
   return (
     <PageContainer title="Settings" subtitle="Serenade preferences — hand configuration stays authoritative">
       <div className="grid gap-4 lg:grid-cols-2">
+        <EnvironmentSection
+          onRevalidate={() => {
+            void queryClient.invalidateQueries({ queryKey: ["environment"] });
+            void queryClient.invalidateQueries({ queryKey: ["config"] });
+          }}
+        />
         <Card>
-          <CardHeader title="Fleet" />
+          <CardHeader title="Fleet paths" />
           <div className="space-y-4 p-4">
             <Field label="hand binary path" hint="Executable name on PATH, or an absolute path.">
               <Input
@@ -94,8 +103,15 @@ export function SettingsPage() {
               />
             </Field>
             <div className="space-y-1.5 rounded-lg bg-surface p-3">
-              {statusRow(env.data?.handFound, env.data?.handFound ? `hand found (${env.data.handVersion})` : "hand not found")}
-              {statusRow(env.data?.fleetValid, env.data?.fleetValid ? "fleet valid" : "fleet missing or invalid")}
+              {(() => {
+                const hand = env.data?.tools.find((t) => t.id === "hand");
+                const handReady = hand?.state === "ready";
+                return statusRow(handReady, handReady ? `hand found (${hand?.version ?? ""})` : hand?.message ?? "hand not found");
+              })()}
+              {(() => {
+                const fleetReady = env.data?.fleet.state === "ready";
+                return statusRow(fleetReady, fleetReady ? "fleet valid" : env.data?.fleet.message ?? "fleet missing or invalid");
+              })()}
               {handCompatibility && (
                 <p
                   className={`pl-5 text-[11px] ${

@@ -104,10 +104,10 @@ describe("MockSerenadeApi", () => {
   it("validates the environment from config", async () => {
     const api = new MockSerenadeApi();
     let env = await api.validateEnvironment();
-    expect(env.ok).toBe(true);
+    expect(env.ready).toBe(true);
     await api.updateConfig({ handBinaryPath: null, fleetPath: null });
     env = await api.validateEnvironment();
-    expect(env.ok).toBe(false);
+    expect(env.ready).toBe(false);
     expect(env.issues.length).toBeGreaterThan(0);
   });
 });

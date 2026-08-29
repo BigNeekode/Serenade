@@ -197,16 +197,54 @@ export interface AppConfig {
     reportReady: boolean;
     approvalRequired: boolean;
   };
+  /** True once the first-run wizard has been completed. Used as a UX hint only; actual readiness is always derived from scans. */
+  setupCompleted: boolean;
+}
+
+export type ToolOwnership = "managed" | "system" | "custom";
+
+export type ToolState =
+  | "missing"
+  | "installing"
+  | "installed"
+  | "configuration-required"
+  | "authentication-required"
+  | "incompatible"
+  | "unhealthy"
+  | "ready";
+
+export interface ToolStatus {
+  id: string;
+  label: string;
+  required: boolean;
+  ownership?: ToolOwnership;
+  path?: string;
+  version?: string;
+  state: ToolState;
+  compatible?: boolean;
+  message?: string;
+  suggestedAction?: string;
+  capabilities: string[];
+}
+
+export interface FleetHealth {
+  path?: string;
+  state: ToolState;
+  message?: string;
+}
+
+export interface EnvironmentPlatform {
+  os: string;
+  arch: string;
 }
 
 export interface EnvironmentStatus {
-  ok: boolean;
-  handFound: boolean;
-  handPath?: string;
-  handVersion?: string;
-  fleetValid: boolean;
-  fleetPath?: string;
+  platform: EnvironmentPlatform;
+  tools: ToolStatus[];
+  fleet: FleetHealth;
+  ready: boolean;
   issues: string[];
+  setupCompleted?: boolean;
 }
 
 export interface HandCapabilities {

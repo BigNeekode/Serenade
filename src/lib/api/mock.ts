@@ -319,6 +319,7 @@ const defaultConfig: AppConfig = {
   density: "comfortable",
   reducedMotion: false,
   notifications: { workerFailed: true, taskCompleted: true, reportReady: true, approvalRequired: true },
+  setupCompleted: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -467,18 +468,61 @@ export class MockSerenadeApi implements SerenadeApi {
 
   async validateEnvironment(): Promise<EnvironmentStatus> {
     await delay();
+    // In mock mode, the default "hand" placeholder simulates PATH discovery.
     const handFound = !!this.config.handBinaryPath;
     const fleetValid = !!this.config.fleetPath;
     const issues: string[] = [];
     if (!handFound) issues.push("hand executable not found — configure the binary path in Settings.");
     if (!fleetValid) issues.push("fleet path is not set or does not look like a valid hand fleet.");
     return {
-      ok: handFound && fleetValid,
-      handFound,
-      handPath: this.config.handBinaryPath ?? undefined,
-      handVersion: handFound ? "0.9.3 (mock)" : undefined,
-      fleetValid,
-      fleetPath: this.config.fleetPath ?? undefined,
+      platform: { os: "mock", arch: "mock" },
+      tools: [
+        {
+          id: "git",
+          label: "Git",
+          required: true,
+          ownership: "system",
+          path: "/usr/bin/git",
+          version: "2.42.0",
+          state: "ready",
+          compatible: true,
+          message: "System Git detected.",
+          capabilities: ["version-control"],
+        },
+        {
+          id: "hand",
+          label: "Secondhand / hand",
+          required: true,
+          ownership: handFound ? "custom" : undefined,
+          path: this.config.handBinaryPath ?? undefined,
+          version: handFound ? "0.6.3 (mock)" : undefined,
+          state: handFound ? "ready" : "missing",
+          compatible: handFound ? true : false,
+          message: handFound ? "Verified legacy Hand 0.6 integration." : "No Hand executable found.",
+          suggestedAction: handFound
+            ? undefined
+            : "Use Quick Setup to install a managed version, or set a system/custom Hand path.",
+          capabilities: ["fleet"],
+        },
+        {
+          id: "supervisor",
+          label: "Serenade Supervisor (OpenCode)",
+          required: false,
+          ownership: "system",
+          path: "/usr/bin/opencode",
+          version: "0.1.0 (mock)",
+          state: "installed",
+          compatible: true,
+          message: "OpenCode executable found. Complete provider authentication if prompted.",
+          capabilities: ["supervisor-chat"],
+        },
+      ],
+      fleet: {
+        path: this.config.fleetPath ?? undefined,
+        state: fleetValid ? "ready" : "missing",
+        message: fleetValid ? "Valid Fleet home detected." : "No Fleet path configured.",
+      },
+      ready: handFound && fleetValid,
       issues,
     };
   }
@@ -496,17 +540,23 @@ export class MockSerenadeApi implements SerenadeApi {
         supportsTaskMessage: true,
         supportsReportListing: true,
       },
-      handPath: env.handPath,
-      handVersion: env.handVersion,
-      fleetPath: env.fleetPath,
-      fleetValid: env.fleetValid,
+      handPath: env.tools.find((t) => t.id === "hand")?.path,
+      handVersion: env.tools.find((t) => t.id === "hand")?.version,
+      fleetPath: env.fleet.path,
+      fleetValid: env.fleet.state === "ready",
       recentErrors: this.recentErrors.slice(0, 10),
     };
   }
 
-  async initializeFleet(path: string): Promise<void> {
+  async initializeFleet(path: string, _force?: boolean): Promise<void> {
     await delay();
     this.config = { ...this.config, fleetPath: path.trim() || null };
+  }
+
+  async installManagedHand(): Promise<string> {
+    await delay();
+    this.config = { ...this.config, handBinaryPath: "/managed/hand.exe" };
+    return "Installed Hand 0.6.0 (mock) at /managed/hand.exe";
   }
 
   // -- reads ------------------------------------------------------------------
@@ -521,6 +571,39 @@ export class MockSerenadeApi implements SerenadeApi {
     const p = projects.find((x) => x.id === projectId);
     if (!p) throw new SerenadeApiError({ code: "PROJECT_NOT_FOUND", title: "Project not found", message: `No project with id ${projectId}.`, recoverable: false });
     return clone(p);
+  }
+
+  async addProject(source: string): Promise<void> {
+    await delay();
+    if (!source.trim()) throw new SerenadeApiError({ code: "INVALID_PATH", title: "Invalid source", message: "Project source must not be empty.", recoverable: true });
+    const name = source.split("/").pop()?.replace(/\.git$/, "") ?? `project-${this.projectStore.length + 1}`;
+    this.projectStore.push({
+      id: `p_${name}`,
+      name,
+      repoUrl: source.startsWith("http") || source.startsWith("git@") ? source : undefined,
+      repoPath: source.startsWith("http") || source.startsWith("git@") ? undefined : source,
+      status: "active",
+      defaultBranch: "main",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  async createProject(name: string): Promise<void> {
+    await delay();
+    if (!name.trim()) throw new SerenadeApiError({ code: "INVALID_PATH", title: "Invalid name", message: "Project name must not be empty.", recoverable: true });
+    this.projectStore.push({
+      id: `p_${name.trim()}`,
+      name: name.trim(),
+      status: "active",
+      defaultBranch: "main",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  private get projectStore(): Project[] {
+    return projects;
   }
 
   async listTasks(projectId?: string): Promise<Task[]> {

@@ -16,6 +16,11 @@ pub enum Code {
     GitFailed,
     InvalidPath,
     NotFound,
+    DownloadFailed,
+    IntegrityCheckFailed,
+    InstallFailed,
+    UnsupportedPlatform,
+    ToolIncompatible,
 }
 
 impl Code {
@@ -33,6 +38,11 @@ impl Code {
             Code::GitFailed => "GIT_FAILED",
             Code::InvalidPath => "INVALID_PATH",
             Code::NotFound => "NOT_FOUND",
+            Code::DownloadFailed => "DOWNLOAD_FAILED",
+            Code::IntegrityCheckFailed => "INTEGRITY_CHECK_FAILED",
+            Code::InstallFailed => "INSTALL_FAILED",
+            Code::UnsupportedPlatform => "UNSUPPORTED_PLATFORM",
+            Code::ToolIncompatible => "TOOL_INCOMPATIBLE",
         }
     }
 }

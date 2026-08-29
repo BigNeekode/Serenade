@@ -90,7 +90,8 @@ export function classifyHandCompatibility(handVersion?: string): HandCompatibili
 }
 
 export function compatibilityFromEnvironment(env: EnvironmentStatus): HandCompatibility {
-  if (!env.handFound) {
+  const hand = env.tools.find((t) => t.id === "hand");
+  if (!hand || hand.state !== "ready") {
     return {
       mode: "unsupported",
       contract: "unknown",
@@ -98,7 +99,7 @@ export function compatibilityFromEnvironment(env: EnvironmentStatus): HandCompat
       reason: "Hand is not available.",
     };
   }
-  return classifyHandCompatibility(env.handVersion);
+  return classifyHandCompatibility(hand.version);
 }
 
 export function assertHandMutationCompatible(env: EnvironmentStatus): void {
@@ -109,7 +110,10 @@ export function assertHandMutationCompatible(env: EnvironmentStatus): void {
     code: "UNSUPPORTED_CAPABILITY",
     title: "Hand contract not mutation-safe",
     message: compatibility.reason,
-    detail: env.handVersion ? `Detected: ${env.handVersion}` : "Hand version unavailable",
+    detail: (() => {
+      const hand = env.tools.find((t) => t.id === "hand");
+      return hand?.version ? `Detected: ${hand.version}` : "Hand version unavailable";
+    })(),
     recoverable: true,
     suggestedAction:
       compatibility.contract === "legacy-0.6"
