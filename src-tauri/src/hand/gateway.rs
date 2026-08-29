@@ -38,10 +38,6 @@ impl HandLegacyGateway {
         Ok(compatibility::classify(&self.runner.version()?))
     }
 
-    pub fn assert_workflow_mutation_compatible(&self) -> Result<(), SerenadeError> {
-        self.runner.assert_workflow_mutation_compatible()
-    }
-
     /// Legacy fleet/status projection used by the 0.6 compatibility adapter.
     pub fn fleet_status(&self) -> Result<FleetJson, SerenadeError> {
         self.runner.json(&["status", "--json"], 20)
