@@ -149,9 +149,17 @@ export interface FleetEvent {
 
 export type PreferredEditor = "vscode" | "cursor" | "zed" | "custom";
 
+/**
+ * Supervisor Harness is intentionally separate from Worker routes/profiles.
+ * Only OpenCode is live-qualified in Serenade today; additional values should
+ * be added only when their headless/session invocation contract is verified.
+ */
+export type SupervisorHarness = "opencode";
+
 export interface AppConfig {
   handBinaryPath: string | null;
   fleetPath: string | null;
+  supervisorHarness: SupervisorHarness;
   preferredEditor: PreferredEditor;
   customEditorPath?: string | null;
   refreshProfile: "slow" | "default" | "fast";
