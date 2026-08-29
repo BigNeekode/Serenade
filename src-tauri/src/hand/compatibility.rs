@@ -50,12 +50,12 @@ pub fn classify(raw: &str) -> HandCompatibility {
             mutations_allowed: false,
             reason: "Hand 0.7 is a transition contract that has not been release-qualified by Serenade yet.",
         },
-        (0, 8..) => HandCompatibility {
+        (0, m) if m >= 8 => HandCompatibility {
             contract: HandContract::V08Unadapted,
             mutations_allowed: false,
             reason: "Hand 0.8+ requires Serenade's canonical 0.8 adapter before workflow mutations are safe.",
         },
-        (0, 0..=5) => HandCompatibility {
+        (0, m) if m <= 5 => HandCompatibility {
             contract: HandContract::Unknown,
             mutations_allowed: false,
             reason: "This Hand version predates Serenade's minimum supported 0.6 contract.",
