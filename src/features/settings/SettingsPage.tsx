@@ -47,6 +47,7 @@ export function SettingsPage() {
         handPath: diagnostics.data?.handPath,
         handVersion: diagnostics.data?.handVersion,
         handCompatibility,
+        supervisorHarness: cfg?.supervisorHarness ?? "opencode",
         fleetPath: diagnostics.data?.fleetPath,
         fleetValid: diagnostics.data?.fleetValid,
         capabilities: diagnostics.data?.capabilities,
@@ -129,6 +130,34 @@ export function SettingsPage() {
             <p className="text-[10px] leading-relaxed text-fg-subtle">
               Unknown/new Hand contracts remain available for diagnostics, but workflow mutations are blocked until the adapter is verified.
             </p>
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader title="Supervisor" />
+          <div className="space-y-4 p-4">
+            <Field
+              label="Supervisor Harness"
+              hint="Separate from Hand worker routes/profiles. Serenade exposes only runtime adapters it has qualified."
+            >
+              <Select
+                value={cfg?.supervisorHarness ?? "opencode"}
+                onChange={(e) =>
+                  save(
+                    { supervisorHarness: e.target.value as NonNullable<AppConfig["supervisorHarness"]> },
+                    "Supervisor Harness",
+                  )
+                }
+              >
+                <option value="opencode">OpenCode — qualified</option>
+              </Select>
+            </Field>
+            <div className="rounded-lg border border-line bg-surface p-3">
+              <p className="text-xs font-medium text-fg">Qualified runtime adapter</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-fg-subtle">
+                OpenCode is currently the only Serenade Supervisor Harness with a verified headless/session invocation path. Claude, Codex, Pi, and other Hand-capable Harnesses will appear here only after their Supervisor runtime contracts are qualified; worker routing is unaffected.
+              </p>
+            </div>
           </div>
         </Card>
 
@@ -237,6 +266,7 @@ export function SettingsPage() {
               label="Workflow mutations"
               value={handCompatibility ? (handCompatibility.mutationsAllowed ? "enabled" : "blocked") : "—"}
             />
+            <Row label="Supervisor Harness" value={cfg?.supervisorHarness ?? "opencode"} />
             <Row label="Fleet path" value={diagnostics.data?.fleetPath ?? "—"} mono />
             <Row label="Fleet valid" value={diagnostics.data?.fleetValid == null ? "—" : String(diagnostics.data.fleetValid)} />
             {Object.entries(diagnostics.data?.capabilities ?? {}).map(([cap, supported]) => (
