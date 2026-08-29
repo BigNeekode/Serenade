@@ -74,6 +74,14 @@ impl FleetFiles {
         _execution_class: &str,
         tags: &[String],
     ) -> Result<(), SerenadeError> {
+        // This is a local side effect performed immediately before `hand spawn`.
+        // Enforce the same compatibility policy *before* touching disk so a raw
+        // Tauri invoke cannot leave a new brief behind when the installed Hand
+        // contract is unqualified. The later HandRunner spawn guard remains a
+        // second line of defense at the process boundary.
+        let (_, runner, _) = crate::setup()?;
+        runner.assert_workflow_mutation_compatible()?;
+
         if !valid_task_id(task_id) {
             return Err(SerenadeError::new(
                 Code::InvalidPath,
