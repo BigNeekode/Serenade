@@ -216,3 +216,46 @@ pub fn to_worktree(s: &StatusJson) -> Option<Worktree> {
         created_at: s.created_at.clone(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hand::model::ReportedJson;
+
+    fn status(attempt: &str, agent: Option<&str>) -> StatusJson {
+        StatusJson {
+            id: "task-1".into(),
+            project: "demo".into(),
+            kind: "ship".into(),
+            task_lifecycle: Some("open".into()),
+            attempt_lifecycle: Some(attempt.into()),
+            agent_state: agent.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn provider_done_does_not_complete_running_attempt() {
+        let s = status("running", Some("done"));
+        assert_eq!(derive_agent_status(&s), "waiting");
+        assert_eq!(derive_task_status(&s, false), "in_progress");
+    }
+
+    #[test]
+    fn worker_report_done_does_not_complete_terminal_interrupted_attempt() {
+        let mut s = status("interrupted", None);
+        s.task_lifecycle = Some("terminal".into());
+        s.reported = Some(ReportedJson {
+            state: "done".into(),
+            note: "worker claims done".into(),
+        });
+        assert_eq!(derive_task_status(&s, false), "stopped");
+    }
+
+    #[test]
+    fn attempt_completion_is_strong_enough_for_terminal_done() {
+        let mut s = status("completed", None);
+        s.task_lifecycle = Some("terminal".into());
+        assert_eq!(derive_task_status(&s, false), "done");
+    }
+}
