@@ -13,6 +13,11 @@ export interface SupervisorChatState {
   counter: number;
 }
 
+export interface SupervisorChatMessage {
+  role: "operator" | "supervisor";
+  text: string;
+}
+
 interface UiState {
   selectedProjectId: string | null;
   setSelectedProjectId: (id: string | null) => void;
@@ -29,6 +34,8 @@ interface UiState {
   supervisorChats: Record<string, SupervisorChatState>;
   getSupervisorChat: (scope: string) => SupervisorChatState;
   setSupervisorChat: (scope: string, state: SupervisorChatState) => void;
+  /** Functional append — safe from async callbacks because it never reads a stale snapshot. */
+  appendSupervisorMessage: (scope: string, message: SupervisorChatMessage) => void;
 }
 
 const UiContext = createContext<UiState | null>(null);
@@ -80,6 +87,20 @@ export function UiStoreProvider({ children }: { children: ReactNode }) {
     setSupervisorChats((chats) => ({ ...chats, [scope]: state }));
   }, []);
 
+  const appendSupervisorMessage = useCallback((scope: string, message: SupervisorChatMessage) => {
+    setSupervisorChats((chats) => {
+      const chat = chats[scope] ?? { messages: [], createdTitles: [], counter: 0 };
+      return {
+        ...chats,
+        [scope]: {
+          ...chat,
+          messages: [...chat.messages, { id: chat.counter + 1, ...message }],
+          counter: chat.counter + 1,
+        },
+      };
+    });
+  }, []);
+
   const selectTask = useCallback((id: string | null) => {
     setSelectedTaskId(id);
     if (id) setSelectedAgentId(null);
@@ -107,6 +128,7 @@ export function UiStoreProvider({ children }: { children: ReactNode }) {
         supervisorChats,
         getSupervisorChat,
         setSupervisorChat,
+        appendSupervisorMessage,
       }}
     >
       {children}

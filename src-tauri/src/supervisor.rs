@@ -199,9 +199,21 @@ pub fn run_supervisor_turn(
         ),
     };
 
-    let (config, _, _) = crate::setup()?;
+    let (config, runner, _) = crate::setup()?;
     let harness = config.supervisor_harness.clone();
     let mut cmd = qualified_harness_command(&harness, session_id, cwd, &turn_prompt)?;
+
+    // The Supervisor runtime contract requires the harness to run `hand orient`
+    // / `hand session start` itself. Make the configured Hand binary and the
+    // runtime tools (treehouse, herdr) resolvable from the harness's own tool
+    // calls, without relying on a user PATH that may not be refreshed yet.
+    let mut extra: Vec<PathBuf> = Vec::new();
+    if let Some(parent) = std::path::Path::new(&runner.binary).parent() {
+        extra.push(parent.to_path_buf());
+    }
+    if let Some(path) = crate::hand::process::child_path_with_extra_dirs(&extra) {
+        cmd.env("PATH", path);
+    }
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -254,6 +266,10 @@ pub fn run_supervisor_turn(
                     Code::CommandFailed,
                     "Supervisor Harness failed",
                     truncate(stderr, 2000),
+                )
+                .with_detail(truncate(stdout, 2000))
+                .with_action(
+                    "Verify the Supervisor Harness is installed and authenticated with its provider (OpenCode stores credentials through its own `opencode auth` login flow). Then send the message again.",
                 ));
             }
             let (session, text) = parse_events(&stdout);

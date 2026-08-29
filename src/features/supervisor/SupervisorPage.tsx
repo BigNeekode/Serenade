@@ -118,7 +118,7 @@ export function SupervisorPage() {
   const interaction = useMemo(() => new InteractionGateway(api), [api]);
   const toast = useToast();
   const { data: projects } = useProjects();
-  const { getSupervisorChat, setSupervisorChat, selectedProjectId } = useUiStore();
+  const { getSupervisorChat, setSupervisorChat, appendSupervisorMessage, selectedProjectId } = useUiStore();
   const [scope, setScope] = useState<string>(() =>
     selectedProjectId ?? FLEET_SCOPE,
   );
@@ -137,17 +137,19 @@ export function SupervisorPage() {
   const sendMutation = useMutation({
     mutationFn: (message: string) => interaction.sendReasoningInput(message, projectId),
     onSuccess: (reply) => {
-      setSupervisorChat(scope, {
-        ...chat,
-        messages: [
-          ...chat.messages,
-          { id: chat.counter + 1, role: "supervisor", text: reply.text },
-        ],
-        counter: chat.counter + 1,
-      });
+      appendSupervisorMessage(scope, { role: "supervisor", text: reply.text });
     },
     onError: (err) => {
       const appErr = toAppError(err);
+      // Persist the failure in the transcript so it stays visible after any
+      // transient toast expires — a silent-looking chat is never acceptable.
+      const detail = appErr.detail ? `\n\n\`\`\`\n${appErr.detail}\n\`\`\`` : "";
+      appendSupervisorMessage(scope, {
+        role: "supervisor",
+        text: `**${appErr.title}**\n\n${appErr.message}${detail}${
+          appErr.suggestedAction ? `\n\n${appErr.suggestedAction}` : ""
+        }`,
+      });
       toast.showToast({
         variant: "error",
         title: appErr.title,
@@ -173,11 +175,7 @@ export function SupervisorPage() {
     const text = input.trim();
     if (!text || sendMutation.isPending) return;
     setInput("");
-    setSupervisorChat(scope, {
-      ...chat,
-      messages: [...chat.messages, { id: chat.counter + 1, role: "operator", text }],
-      counter: chat.counter + 1,
-    });
+    appendSupervisorMessage(scope, { role: "operator", text });
     sendMutation.mutate(text);
   };
 

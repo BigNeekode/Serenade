@@ -109,18 +109,21 @@ fn is_workflow_mutation(args: &[&str]) -> bool {
     )
 }
 
-/// PATH for Hand child processes: the current PATH plus Serenade's known
-/// runtime tool directories (treehouse, herdr) when they exist. Hand 0.6
+/// PATH for Hand/Supervisor child processes: the current PATH plus Serenade's
+/// known runtime tool directories (treehouse, herdr) and any extra directories
+/// (e.g. the managed Hand binary's own directory) when they exist. Hand 0.6
 /// invokes these tools from PATH, and the app process does not inherit a
 /// freshly-written user PATH until restart, so the directories are appended
 /// explicitly (never mutating the app's own environment).
-fn child_path_with_runtime_tools() -> Option<std::ffi::OsString> {
+pub fn child_path_with_extra_dirs(extra: &[PathBuf]) -> Option<std::ffi::OsString> {
     let current = std::env::var_os("PATH")?;
     let mut dirs: Vec<PathBuf> = std::env::split_paths(&current).collect();
     let mut changed = false;
-    for extra in crate::runtime_tools::runtime_tool_dirs() {
-        if extra.is_dir() && !dirs.contains(&extra) {
-            dirs.push(extra);
+    let mut all: Vec<PathBuf> = extra.to_vec();
+    all.extend(crate::runtime_tools::runtime_tool_dirs());
+    for candidate in all {
+        if candidate.is_dir() && !dirs.contains(&candidate) {
+            dirs.push(candidate);
             changed = true;
         }
     }
@@ -172,7 +175,14 @@ impl HandRunner {
         if let Some(home) = &self.fleet_home {
             cmd.env("HAND_HOME", absolutize(home));
         }
-        if let Some(path) = child_path_with_runtime_tools() {
+        // Make the configured Hand binary's own directory reachable so tool
+        // calls inside Hand's own flows (and Supervisor Harnesses instructing
+        // `hand orient`) resolve even before a refreshed user PATH takes effect.
+        let mut extra: Vec<PathBuf> = Vec::new();
+        if let Some(parent) = Path::new(&self.binary).parent() {
+            extra.push(parent.to_path_buf());
+        }
+        if let Some(path) = child_path_with_extra_dirs(&extra) {
             cmd.env("PATH", path);
         }
 
