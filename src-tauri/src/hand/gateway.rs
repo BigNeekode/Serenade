@@ -1,4 +1,5 @@
-use crate::error::SerenadeError;
+use crate::error::{Code, SerenadeError};
+use crate::fleet_files::valid_task_id;
 use crate::hand::compatibility::{self, HandCompatibility, HandContract};
 use crate::hand::model::{FleetJson, ProjectJson, StatusJson};
 use crate::hand::HandRunner;
@@ -44,8 +45,22 @@ impl HandLegacyGateway {
     }
 
     /// Legacy single-task status projection.
+    ///
+    /// Keep validation/error normalization here so callers get the same
+    /// semantic contract regardless of which legacy CLI command implements it.
     pub fn task_status(&self, task_id: &str) -> Result<StatusJson, SerenadeError> {
-        self.runner.json(&["status", task_id, "--json"], 20)
+        if !valid_task_id(task_id) {
+            return Err(SerenadeError::new(
+                Code::InvalidPath,
+                "Invalid task id",
+                format!("{task_id:?} is not a valid hand task id."),
+            ));
+        }
+        let status: StatusJson = self.runner.json(&["status", task_id, "--json"], 20)?;
+        if status.id.is_empty() {
+            return Err(SerenadeError::task_not_found(task_id));
+        }
+        Ok(status)
     }
 
     /// Registered project projection for the legacy adapter.
@@ -97,5 +112,22 @@ impl HandLegacyGateway {
             .map(|text| text.trim().to_string())
             .filter(|text| !text.is_empty())
             .map(|text| (SupervisorContextSource::LegacySessionStart, text))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn task_status_rejects_invalid_id_before_running_hand() {
+        let gateway = HandLegacyGateway::new(HandRunner {
+            binary: "definitely-not-a-real-hand-binary".to_string(),
+            fleet_home: Some(PathBuf::from("/tmp/unused-fleet")),
+        });
+
+        let err = gateway.task_status("../escape").unwrap_err();
+        assert_eq!(err.code, "INVALID_PATH");
     }
 }
