@@ -2,9 +2,10 @@
 //!
 //! Serenade is presentation + interaction, not a competing source of Fleet
 //! truth. A provider conversation is therefore only ephemeral UX/runtime state.
-//! Serenade performs a best-effort read-only preflight before each turn, while
-//! the actual Supervisor Harness is instructed to follow Hand's own runtime
-//! contract (`session start` once for a new runtime, `orient` every turn).
+//! Serenade performs a best-effort read-only preflight before each turn through
+//! the configured Hand runner, while the actual Supervisor Harness is instructed
+//! to follow Hand's own runtime contract (`session start` once for a new runtime,
+//! `orient` every turn).
 
 use crate::error::{Code, SerenadeError};
 use serde::Serialize;
@@ -66,29 +67,12 @@ fn truncate(s: String, budget: usize) -> String {
 
 /// Best-effort read of one Hand context command in the supervisor cwd.
 ///
-/// This is deliberately read-only and is only a preflight/context hint. It does
-/// not replace the actual Supervisor Harness's obligation to bootstrap/orient
-/// itself. Exact GUI actions continue through typed Tauri commands. The direct
-/// `hand` executable is a transition shim until the Rust HandGateway owns the
-/// configured binary for all supervisor reads as well.
+/// This uses the same configured binary and HAND_HOME as every other Serenade
+/// Hand call. It is deliberately read-only and is only a preflight/context hint;
+/// it does not replace the actual Supervisor Harness's obligation to orient.
 fn read_hand_context(cwd: &PathBuf, args: &[&str]) -> Option<String> {
-    let mut cmd = Command::new("hand");
-    cmd.args(args)
-        .current_dir(cwd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .stdin(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    let output = cmd.output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let (_, runner, _) = crate::setup().ok()?;
+    let text = runner.expect_in(args, 20, cwd).ok()?.trim().to_string();
     (!text.is_empty()).then_some(text)
 }
 
@@ -179,7 +163,7 @@ pub fn run_supervisor_turn(
         ),
         None => format!(
             "=== SUPERVISOR RUNTIME REQUIREMENT ===\n{runtime_instruction}\n\n\
-             Serenade could not refresh Hand directly from PATH, so do not rely on presentation-side context.\n\n\
+             Serenade could not refresh Hand through the configured runner, so do not rely on presentation-side context.\n\n\
              === SERENADE TURN ===\n{message}"
         ),
     };
