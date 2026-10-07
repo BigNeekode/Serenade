@@ -15,7 +15,7 @@
 
 Serenade is a free, local-first desktop GUI for [Secondhand (`hand`)](https://github.com/atqamz/hand), the multi-agent coding orchestrator. If you run several AI coding agents in parallel, `hand` orchestrates them; **Serenade makes the fleet visible, controllable, and steerable without keeping a pile of terminals open.**
 
-> Serenade is the **Presentation + Interaction layer** above Hand. It does not reimplement orchestration, lifecycle, routing, session management, or worktree authority. `hand` remains the source of truth.
+> Serenade is the **Presentation + Interaction layer** above Hand. It does not reimplement orchestration, lifecycle, routing, session management, or worktree authority. `hand` remains the source of truth.\n>\n> **Modernization note (2026-10-07):** the shipping code is still verified against Hand 0.6.x, while the active design/roadmap now targets Hand 0.9+ and its managed Supervisor, Decisions, Reports, Plans, Attempts, Luvus runtime, routing profiles, event cursor and update lifecycle.
 
 ```mermaid
 flowchart LR
@@ -222,7 +222,7 @@ Hand 0.6 registers remote Git repositories. From Quick Setup or the Projects pag
 hand project add https://github.com/you/your-repo
 ```
 
-`hand project add` also accepts `git@…`, `ssh://…`, and `git://…` URLs. Creating a brand-new repository or adopting a local checkout (`hand project create` / local paths) are Hand 0.8 features not yet exposed by Serenade. To start a brand-new project, create the repository on your remote first, then register its URL here.
+`hand project add` also accepts `git@…`, `ssh://…`, and `git://…` URLs on Serenade's current legacy Hand 0.6 path. Modern project semantics are handled separately by the planned Hand 0.9+ adapter; see the modern roadmap before extending this workflow.
 
 You can confirm the fleet configuration with:
 
@@ -300,7 +300,7 @@ If OpenCode is missing, the rest of Serenade remains usable; only Supervisor cha
                     canonical fleet/task/attempt workflow
 ```
 
-Current 0.6 integration still uses Hand's legacy CLI/files underneath the gateway. The boundary exists so a future released `HandV08Gateway` can consume canonical Hand 0.8 projections/actions without rewriting the React presentation layer.
+Current 0.6 integration still uses Hand's legacy CLI/files underneath the gateway. The boundary now exists so the planned `HandModernGateway` can consume Hand 0.9+ public CLI/TOON projections and interaction operations without rewriting the React presentation layer.
 
 Key principles:
 
@@ -368,7 +368,7 @@ The `docs/` directory contains the deeper engineering material:
 - [`docs/architecture.md`](docs/architecture.md) — system architecture and safety model.
 - [`docs/implementation-plan.md`](docs/implementation-plan.md) — milestone plan.
 - [`docs/hand-integration-notes.md`](docs/hand-integration-notes.md) — verified legacy Hand CLI/runtime contract.
-- [`docs/hand-0.8-roadmap.md`](docs/hand-0.8-roadmap.md) — living Hand 0.8 alignment/progression tracker.
+- [`docs/hand-modern-roadmap.md`](docs/hand-modern-roadmap.md) — active Hand 0.9+ alignment roadmap.\n- [`docs/hand-modern-implementation-plan.md`](docs/hand-modern-implementation-plan.md) — phased modern adapter implementation plan.
 - [`docs/tasks.md`](docs/tasks.md) — implementation backlog and status.
 
 ## Troubleshooting
@@ -441,7 +441,7 @@ Safe next areas:
 - Streaming Supervisor replies.
 - Token and cost analytics where the underlying harness data is available.
 
-See [`docs/hand-0.8-roadmap.md`](docs/hand-0.8-roadmap.md) for Hand alignment progress and [`docs/tasks.md`](docs/tasks.md) for the broader backlog.
+See [`docs/hand-modern-roadmap.md`](docs/hand-modern-roadmap.md) for Hand alignment progress, [`docs/hand-modern-implementation-plan.md`](docs/hand-modern-implementation-plan.md) for the migration sequence, and [`docs/tasks.md`](docs/tasks.md) for the broader backlog.
 
 ## Contributing
 

@@ -1,58 +1,70 @@
 # Serenade Documentation Pack
 
-**Serenade** is a graphical control interface for **Secondhand / `hand`**.
+**Serenade** is a graphical desktop presentation and interaction client for **Secondhand / `hand`**.
 
-> Secondhand + Serenade. Yes, the name collision is intentional.
+> Secondhand owns orchestration and interaction truth. Serenade owns visibility, navigation, review and operator ergonomics.
 
-This folder contains the product, architecture, integration, onboarding, and implementation planning documents for the Serenade desktop application.
+## Active documents
 
-## Files
+### Product and architecture
 
-### Core product / architecture
+- `design.md` — current product/UX design for the Hand 0.9+ interaction model.
+- `architecture.md` — dual-adapter architecture, modern Hand gateway, event bridge, transports and safety boundaries.
+- `implementation-plan.md` — original/general Serenade implementation history and milestone plan.
+- `tasks.md` — general implementation backlog.
+- `hand-integration-notes.md` — verified notes for the currently implemented Hand 0.6 legacy contract.
 
-- `design.md` — product vision, UX, screens, flows, design system, and MVP scope.
-- `architecture.md` — frontend/backend architecture, safety boundaries, adapter design, polling, and testing.
-- `implementation-plan.md` — staged implementation strategy and milestones.
-- `tasks.md` — general implementation backlog with task IDs and checkboxes.
-- `hand-integration-notes.md` — verified notes for the currently implemented Hand CLI contract.
-- `hand-0.8-roadmap.md` — living migration/progression tracker for Hand 0.8 Presentation + Interaction alignment, blockers, next actions, and upstream update reviews.
+### Modern Hand migration
+
+- `hand-modern-roadmap.md` — active Hand 0.9+ migration roadmap, compatibility policy and workstreams.
+- `hand-modern-implementation-plan.md` — phased Codex-ready implementation plan for the modern adapter.
+- `hand-0.8-roadmap.md` — archived pointer only; do not use for new implementation work.
 
 ### Quick Setup / onboarding
 
-- `quick-setup-design.md` — first-run wizard, Environment Manager, tool ownership/readiness, auto-repair UX, and Windows-first MVP scope.
-- `quick-setup-architecture.md` — installer/security boundaries, SetupCoordinator, EnvironmentInspector, ToolManager, FleetSetup, compatibility manifest, resumability, and stop conditions.
-- `quick-setup-implementation-plan.md` — phased implementation order from environment scanning through managed tooling, Fleet setup, Supervisor setup, project onboarding, repair, and packaging.
-- `quick-setup-tasks.md` — OpenCode-ready execution checklist and live progress tracker for the Quick Setup feature.
+The existing Quick Setup documents describe the currently implemented/legacy environment path and will need modernization as the Hand 0.9+ adapter lands:
 
-## Recommended OpenCode order
+- `quick-setup-design.md`
+- `quick-setup-architecture.md`
+- `quick-setup-implementation-plan.md`
+- `quick-setup-tasks.md`
 
-For general Serenade work:
+For modern Hand, Treehouse/Herdr installation must not be carried forward; Hand owns Luvus and provides its own update lifecycle.
 
-1. Read `design.md`.
-2. Read `architecture.md`.
-3. Read `hand-0.8-roadmap.md` before changing Hand-facing architecture or Supervisor behavior.
-4. Use `hand-integration-notes.md` for the currently implemented Hand contract.
-5. Use `tasks.md` as the general implementation backlog.
-6. Use `implementation-plan.md` as the milestone guide.
+## Recommended Codex reading order
 
-For **Quick Setup / automatic environment onboarding** work:
+For **Hand modernization**:
 
-1. Read `quick-setup-design.md`.
-2. Read `quick-setup-architecture.md`.
-3. Read `hand-0.8-roadmap.md` and preserve its compatibility rules.
-4. Read `hand-integration-notes.md` before invoking current Hand setup/project commands.
-5. Execute `quick-setup-implementation-plan.md` phase-by-phase.
-6. Track every implementation result/blocker in `quick-setup-tasks.md`.
-7. Keep `quick-setup-tasks.md` and `hand-0.8-roadmap.md` synchronized when upstream Hand changes invalidate assumptions.
+1. `design.md`
+2. `architecture.md`
+3. `hand-modern-roadmap.md`
+4. `hand-modern-implementation-plan.md`
+5. `hand-integration-notes.md` only when preserving the Hand 0.6 legacy adapter
+6. current upstream Hand 0.9+ public README/spec/vocabulary before implementing a command
+
+For ordinary legacy fixes:
+
+1. `hand-integration-notes.md`
+2. `tasks.md`
+3. the relevant implementation document
 
 ## Naming
 
 ```text
 hand         → CLI
-Secondhand   → orchestration system
-Serenade     → Presentation + Interaction GUI / control interface
+Secondhand   → orchestration + interaction system
+Serenade     → desktop presentation + interaction client
+
+Legacy06     → current verified Hand 0.6 adapter
+Modern09     → target Hand 0.9+ adapter
 ```
 
-The most important architectural constraint remains: **Serenade sits on top of `hand`; it does not reimplement the orchestration engine or own canonical workflow truth.**
+## Core rules
 
-Quick Setup adds one additional rule: **Serenade may discover/install local tools and invoke Hand's canonical setup operations, but it must not silently install unqualified versions, expose arbitrary shell/download primitives, or manipulate Hand's database directly.**
+1. **Hand is canonical.**
+2. **Serenade does not read/write `hand.db` directly.**
+3. **Serenade does not control Luvus directly for workflow operations.**
+4. **Modern Supervisor state belongs to Hand.**
+5. **Public Hand CLI/TOON is the modern integration contract.**
+6. **Unknown/new Hand contracts fail closed for mutations.**
+7. **Legacy and modern adapters remain isolated until migration is complete.**
